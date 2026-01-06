@@ -318,17 +318,13 @@ Use NEW file line numbers (right side). NEVER use line numbers for code not in t
 <output_format>
 Return ONLY valid JSON:
 {
-  "summary": "Brief factual assessment (1-2 sentences)",
+  "summary": "Brief factual assessment (1-2 sentences) - ALWAYS provide this",
   "verdict": "approve" | "request_changes" | "comment",
-  "comments": [
-    {
-      "file": "src/example.ts",
-      "line": 42,
-      "severity": "critical" | "suggestion" | "nitpick" | "praise",
-      "comment": "Specific, factual feedback"
-    }
-  ]
+  "comments": []  // Can be empty if no specific issues - that's fine!
 }
+
+The summary is REQUIRED - it confirms the review was done and gives an overall assessment.
+An empty comments array is perfectly acceptable for clean code with no issues.
 </output_format>
 
 <verdict_guidelines>
