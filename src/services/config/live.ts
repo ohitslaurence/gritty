@@ -33,7 +33,7 @@ const DEFAULT_CONFIG: GrittyConfig = {
  * Parse a model string in provider/model format.
  * @example parseModelString("anthropic/claude-sonnet-4-5") => { provider: "anthropic", modelId: "claude-sonnet-4-5" }
  */
-const parseModelString = (model: string): ModelRef | null => {
+export const parseModelString = (model: string): ModelRef | null => {
   const parts = model.split("/")
   if (parts.length !== 2) {
     return null
@@ -54,7 +54,7 @@ const parseModelString = (model: string): ModelRef | null => {
  * Supports {env:VAR_NAME} syntax.
  * @example resolveEnvValue("{env:ANTHROPIC_API_KEY}") => "sk-ant-..."
  */
-const resolveEnvValue = (value: string | undefined): string | undefined => {
+export const resolveEnvValue = (value: string | undefined): string | undefined => {
   if (!value) return value
   const match = value.match(/^\{env:([^}]+)\}$/)
   if (match?.[1]) {
@@ -66,7 +66,7 @@ const resolveEnvValue = (value: string | undefined): string | undefined => {
 /**
  * Get environment variable name for a provider's API key.
  */
-const getEnvKeyForProvider = (provider: ProviderName): string => {
+export const getEnvKeyForProvider = (provider: ProviderName): string => {
   switch (provider) {
     case "anthropic":
       return "ANTHROPIC_API_KEY"

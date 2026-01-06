@@ -3,7 +3,7 @@ import { Effect } from "effect"
 /**
  * Files to check for guidelines, in priority order.
  */
-const GUIDELINE_FILES = [
+export const GUIDELINE_FILES = [
   "CLAUDE.md",
   "claude.md",
   ".claude/CLAUDE.md",
@@ -15,7 +15,7 @@ const GUIDELINE_FILES = [
 /**
  * Files to check for README, in priority order.
  */
-const README_FILES = ["README.md", "readme.md"] as const
+export const README_FILES = ["README.md", "readme.md"] as const
 
 /**
  * Repository context gathered from documentation files.
@@ -46,7 +46,7 @@ const tryReadFile = (path: string): Effect.Effect<string | null, never> =>
 /**
  * Truncate content to a max length, preserving complete lines.
  */
-const truncateContent = (content: string, maxLength: number): string => {
+export const truncateContent = (content: string, maxLength: number): string => {
   if (content.length <= maxLength) return content
 
   const truncated = content.slice(0, maxLength)
