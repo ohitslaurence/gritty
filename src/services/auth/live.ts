@@ -78,18 +78,18 @@ const readStoredCredentials = (): Effect.Effect<StoredCredentials, ConfigError> 
         return Effect.succeed({})
       }
 
-      // Try new multi-provider format first
-      return Schema.decodeUnknown(AuthFileSchema)(content).pipe(
-        Effect.map((decoded) => decoded as StoredCredentials),
+      // Try legacy format first (has apiKey at root level)
+      return Schema.decodeUnknown(LegacyAuthFileSchema)(content).pipe(
+        Effect.map((legacy) => ({
+          anthropic: {
+            apiKey: legacy.apiKey,
+            createdAt: legacy.createdAt,
+          },
+        })),
         Effect.catchAll(() =>
-          // Fall back to legacy format (migrate to new format)
-          Schema.decodeUnknown(LegacyAuthFileSchema)(content).pipe(
-            Effect.map((legacy) => ({
-              anthropic: {
-                apiKey: legacy.apiKey,
-                createdAt: legacy.createdAt,
-              },
-            })),
+          // Fall back to new multi-provider format
+          Schema.decodeUnknown(AuthFileSchema)(content).pipe(
+            Effect.map((decoded) => decoded as StoredCredentials),
             Effect.catchAll(() => Effect.succeed({}))
           )
         )
