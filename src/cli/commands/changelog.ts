@@ -49,7 +49,8 @@ const getCommits = (options: {
 > =>
   Effect.tryPromise({
     try: async () => {
-      const args = ["git", "log", "--format=%H|%ad|%an|%s", "--date=short"]
+      // Use null byte as delimiter to handle any characters in commit messages
+      const args = ["git", "log", "--format=%H%x00%ad%x00%an%x00%s", "--date=short"]
 
       // Add range if specified
       if (options.range) {
@@ -82,12 +83,12 @@ const getCommits = (options: {
       const lines = stdout.trim().split("\n").filter(Boolean)
 
       return lines.map((line) => {
-        const [hash, date, author, ...messageParts] = line.split("|")
+        const [hash, date, author, message] = line.split("\0")
         return {
           hash: hash ?? "",
           date: date ?? "",
           author: author ?? "",
-          message: messageParts.join("|"), // In case message contains |
+          message: message ?? "",
         }
       })
     },
