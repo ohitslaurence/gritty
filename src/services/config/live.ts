@@ -59,32 +59,41 @@ const loadConfigFile = (path: string): Effect.Effect<GrittyConfig | null, Config
 const makeConfigService = (): ConfigService["Type"] => {
   let cachedConfig: GrittyConfig | null = null
 
+  const load = (): Effect.Effect<GrittyConfig, ConfigError> =>
+    Effect.gen(function* () {
+      if (cachedConfig) {
+        return cachedConfig
+      }
+
+      // Try local .grittyrc first (like .prettierrc)
+      const rcConfig = yield* loadConfigFile(".grittyrc")
+      if (rcConfig) {
+        cachedConfig = rcConfig
+        return rcConfig
+      }
+
+      // Try local .gritty.json
+      const localConfig = yield* loadConfigFile(".gritty.json")
+      if (localConfig) {
+        cachedConfig = localConfig
+        return localConfig
+      }
+
+      // Try home directory config
+      const homeDir = process.env["HOME"] ?? ""
+      const homeConfig = yield* loadConfigFile(`${homeDir}/.gritty/config.json`)
+      if (homeConfig) {
+        cachedConfig = homeConfig
+        return homeConfig
+      }
+
+      // Return defaults
+      cachedConfig = DEFAULT_CONFIG
+      return DEFAULT_CONFIG
+    })
+
   return {
-    load: () =>
-      Effect.gen(function* () {
-        if (cachedConfig) {
-          return cachedConfig
-        }
-
-        // Try local .gritty.json first
-        const localConfig = yield* loadConfigFile(".gritty.json")
-        if (localConfig) {
-          cachedConfig = localConfig
-          return localConfig
-        }
-
-        // Try home directory config
-        const homeDir = process.env["HOME"] ?? ""
-        const homeConfig = yield* loadConfigFile(`${homeDir}/.gritty/config.json`)
-        if (homeConfig) {
-          cachedConfig = homeConfig
-          return homeConfig
-        }
-
-        // Return defaults
-        cachedConfig = DEFAULT_CONFIG
-        return DEFAULT_CONFIG
-      }),
+    load,
 
     getModel: (speed: SpeedTier): ModelId => {
       return MODEL_IDS[speed]
@@ -92,7 +101,7 @@ const makeConfigService = (): ConfigService["Type"] => {
 
     getDefaultSpeed: () =>
       Effect.gen(function* () {
-        const config = yield* makeConfigService().load()
+        const config = yield* load()
         return config.commit?.model?.default ?? "medium"
       }),
   }
