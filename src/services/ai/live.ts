@@ -680,7 +680,7 @@ export const AIServiceLive = Layer.effect(
             try: async () => {
               const { text } = await generateText({
                 model,
-                maxTokens: 1024,
+                maxOutputTokens: 1024,
                 system: buildSystemPrompt(options),
                 prompt: buildUserPrompt(diff, options.context),
               })
@@ -717,7 +717,7 @@ export const AIServiceLive = Layer.effect(
             try: async () => {
               const { text } = await generateText({
                 model,
-                maxTokens: 4096,
+                maxOutputTokens: 4096,
                 system: buildComposeSystemPrompt(),
                 prompt: buildComposeUserPrompt(files, options.feedback),
               })
@@ -754,7 +754,7 @@ export const AIServiceLive = Layer.effect(
             try: async () => {
               const { text } = await generateText({
                 model,
-                maxTokens: 2048,
+                maxOutputTokens: 2048,
                 system: buildPRSystemPrompt(),
                 prompt: buildPRUserPrompt(commits, diff, options),
               })
@@ -791,7 +791,7 @@ export const AIServiceLive = Layer.effect(
             try: async () => {
               const { text } = await generateText({
                 model,
-                maxTokens: 4096,
+                maxOutputTokens: 4096,
                 system: buildReviewSystemPrompt(options),
                 prompt: buildReviewUserPrompt(diff, options),
               })
@@ -828,7 +828,7 @@ export const AIServiceLive = Layer.effect(
             try: async () => {
               const { text } = await generateText({
                 model,
-                maxTokens: 2048,
+                maxOutputTokens: 2048,
                 system: buildGroupingSystemPrompt(),
                 prompt: buildGroupingUserPrompt(files, options),
               })
@@ -865,7 +865,7 @@ export const AIServiceLive = Layer.effect(
             try: async () => {
               const { text } = await generateText({
                 model,
-                maxTokens: 4096,
+                maxOutputTokens: 4096,
                 system: buildChunkReviewSystemPrompt(options),
                 prompt: buildChunkReviewUserPrompt(chunk, options),
               })
@@ -902,7 +902,7 @@ export const AIServiceLive = Layer.effect(
             try: async () => {
               const { text } = await generateText({
                 model,
-                maxTokens: 4096,
+                maxOutputTokens: 4096,
                 system: buildChangelogSystemPrompt(),
                 prompt: buildChangelogUserPrompt(commits),
               })

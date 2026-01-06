@@ -1,11 +1,28 @@
 import { Effect, Layer, Schema } from "effect"
 import { ConfigError } from "../../types/errors"
+import type { ProviderName } from "../config/service"
 import { AuthService, type StoredCredentials } from "./service"
 
 /**
- * Schema for the auth.json file.
+ * Schema for provider credentials.
+ */
+const ProviderCredentialsSchema = Schema.Struct({
+  apiKey: Schema.String,
+  createdAt: Schema.String,
+})
+
+/**
+ * Schema for the auth.json file (multi-provider).
  */
 const AuthFileSchema = Schema.Struct({
+  anthropic: Schema.optional(ProviderCredentialsSchema),
+  openai: Schema.optional(ProviderCredentialsSchema),
+})
+
+/**
+ * Legacy schema for backward compatibility (single Anthropic key).
+ */
+const LegacyAuthFileSchema = Schema.Struct({
   apiKey: Schema.String,
   createdAt: Schema.String,
 })
@@ -38,8 +55,9 @@ const ensureConfigDir = (): Effect.Effect<void, ConfigError> =>
 
 /**
  * Read stored credentials from file.
+ * Handles both new multi-provider format and legacy single-key format.
  */
-const readStoredCredentials = (): Effect.Effect<StoredCredentials | null, ConfigError> =>
+const readStoredCredentials = (): Effect.Effect<StoredCredentials, ConfigError> =>
   Effect.tryPromise({
     try: async () => {
       const file = Bun.file(getAuthFilePath())
@@ -57,11 +75,24 @@ const readStoredCredentials = (): Effect.Effect<StoredCredentials | null, Config
   }).pipe(
     Effect.flatMap((content) => {
       if (content === null) {
-        return Effect.succeed(null)
+        return Effect.succeed({})
       }
+
+      // Try new multi-provider format first
       return Schema.decodeUnknown(AuthFileSchema)(content).pipe(
         Effect.map((decoded) => decoded as StoredCredentials),
-        Effect.catchAll(() => Effect.succeed(null))
+        Effect.catchAll(() =>
+          // Fall back to legacy format (migrate to new format)
+          Schema.decodeUnknown(LegacyAuthFileSchema)(content).pipe(
+            Effect.map((legacy) => ({
+              anthropic: {
+                apiKey: legacy.apiKey,
+                createdAt: legacy.createdAt,
+              },
+            })),
+            Effect.catchAll(() => Effect.succeed({}))
+          )
+        )
       )
     })
   )
@@ -90,7 +121,7 @@ const writeCredentials = (credentials: StoredCredentials): Effect.Effect<void, C
 /**
  * Delete the auth file.
  */
-const deleteCredentials = (): Effect.Effect<void, ConfigError> =>
+const deleteAuthFile = (): Effect.Effect<void, ConfigError> =>
   Effect.tryPromise({
     try: async () => {
       const { unlink } = await import("node:fs/promises")
@@ -108,35 +139,79 @@ const deleteCredentials = (): Effect.Effect<void, ConfigError> =>
   })
 
 /**
+ * Get the environment variable name for a provider.
+ */
+const getEnvVarName = (provider: ProviderName): string => {
+  switch (provider) {
+    case "anthropic":
+      return "ANTHROPIC_API_KEY"
+    case "openai":
+      return "OPENAI_API_KEY"
+  }
+}
+
+/**
  * Create the live auth service implementation.
  */
 const makeAuthService = (): AuthService["Type"] => ({
-  getApiKey: () =>
+  getApiKey: (provider: ProviderName = "anthropic") =>
     Effect.gen(function* () {
       // Check environment variable first (highest priority)
-      const envKey = process.env["ANTHROPIC_API_KEY"]
+      const envKey = process.env[getEnvVarName(provider)]
       if (envKey) {
         return envKey
       }
 
       // Fall back to stored credentials
       const stored = yield* readStoredCredentials()
-      return stored?.apiKey ?? null
+      return stored[provider]?.apiKey ?? null
     }),
 
-  saveApiKey: (apiKey: string) =>
-    writeCredentials({
-      apiKey,
-      createdAt: new Date().toISOString(),
-    }),
-
-  removeCredentials: () => deleteCredentials(),
-
-  getCredentialsInfo: () => readStoredCredentials(),
-
-  isAuthenticated: () =>
+  saveApiKey: (provider: ProviderName, apiKey: string) =>
     Effect.gen(function* () {
-      const apiKey = yield* makeAuthService().getApiKey()
+      const existing = yield* readStoredCredentials()
+      const updated: StoredCredentials = {
+        ...existing,
+        [provider]: {
+          apiKey,
+          createdAt: new Date().toISOString(),
+        },
+      }
+      yield* writeCredentials(updated)
+    }),
+
+  removeCredentials: (provider?: ProviderName) =>
+    Effect.gen(function* () {
+      if (!provider) {
+        // Remove all credentials
+        yield* deleteAuthFile()
+        return
+      }
+
+      // Remove specific provider
+      const existing = yield* readStoredCredentials()
+      const updated = { ...existing }
+      delete updated[provider]
+
+      // If no credentials left, delete the file
+      if (!updated.anthropic && !updated.openai) {
+        yield* deleteAuthFile()
+      } else {
+        yield* writeCredentials(updated)
+      }
+    }),
+
+  getCredentialsInfo: (provider: ProviderName = "anthropic") =>
+    Effect.gen(function* () {
+      const stored = yield* readStoredCredentials()
+      return stored[provider] ?? null
+    }),
+
+  getAllCredentials: () => readStoredCredentials(),
+
+  isAuthenticated: (provider: ProviderName = "anthropic") =>
+    Effect.gen(function* () {
+      const apiKey = yield* makeAuthService().getApiKey(provider)
       return apiKey !== null && apiKey.length > 0
     }),
 })

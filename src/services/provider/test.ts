@@ -1,14 +1,13 @@
 import { Effect, Layer } from "effect"
-import type { LanguageModelV1 } from "ai"
+import type { LanguageModel } from "ai"
 import type { AIError } from "../../types/errors"
-import type { ModelRef } from "../config/service"
 import { ProviderService, type ProviderServiceImpl } from "./service"
 
 /**
  * Mock language model for testing.
- * Returns a minimal mock that satisfies the LanguageModelV1 interface.
+ * Returns a minimal mock that satisfies the LanguageModel interface.
  */
-const createMockModel = (): LanguageModelV1 =>
+const createMockModel = (): LanguageModel =>
   ({
     specificationVersion: "v1",
     provider: "mock",
@@ -24,7 +23,7 @@ const createMockModel = (): LanguageModelV1 =>
       rawCall: { rawPrompt: "", rawSettings: {} },
       stream: new ReadableStream(),
     }),
-  }) as unknown as LanguageModelV1
+  }) as unknown as LanguageModel
 
 /**
  * Create a test ProviderService with configurable behavior.
@@ -44,7 +43,7 @@ export const TestProviderService = {
   /**
    * Create a test layer that returns a specific mock model.
    */
-  withMockModel: (model: LanguageModelV1): Layer.Layer<ProviderService> =>
+  withMockModel: (model: LanguageModel): Layer.Layer<ProviderService> =>
     Layer.succeed(
       ProviderService,
       ProviderService.of({

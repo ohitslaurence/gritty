@@ -8,7 +8,6 @@ import {
   GrittyConfigSchema,
   type GrittyConfig,
   type ModelRef,
-  type ProviderConfig,
   type ProviderName,
 } from "./service"
 
@@ -58,7 +57,7 @@ const parseModelString = (model: string): ModelRef | null => {
 const resolveEnvValue = (value: string | undefined): string | undefined => {
   if (!value) return value
   const match = value.match(/^\{env:([^}]+)\}$/)
-  if (match) {
+  if (match?.[1]) {
     return process.env[match[1]] ?? undefined
   }
   return value
