@@ -267,6 +267,21 @@ bun run dev -- commit --accept
 
 **IMPORTANT:** For review command, options must come before the PR number. Use `--` to separate: `review -p -- 123`
 
+### PR Review Workflow
+
+When reviewing PRs (including your own), **actually act on the feedback**:
+
+1. Run `review -p -- <PR>` to generate and post the review
+2. Read through the comments - especially suggestions and critical issues
+3. **Implement valid suggestions** before merging:
+   - Performance improvements with concrete benefits
+   - Better use of Effect patterns (parallel operations, proper error handling)
+   - Security or correctness fixes
+4. Commit the improvements and push to the PR branch
+5. Only merge after addressing actionable feedback
+
+Don't just run the review and ignore it. The point of review is to improve the code.
+
 ## Key Architectural Decisions
 
 1. **Effect for all async/fallible operations** - No raw Promises or try/catch
