@@ -59,3 +59,4 @@ export const main = (): void => {
     BunRuntime.runMain
   )
 }
+// Test comment
