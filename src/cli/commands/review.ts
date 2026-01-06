@@ -4,6 +4,7 @@ import { unlink } from "fs/promises"
 import { DiffContent } from "../../types/branded"
 import { AIService, type PRReview } from "../../services/ai/service"
 import { UserError, GitError } from "../../types/errors"
+import { requireGhCli } from "../../core/gh-utils"
 
 /**
  * Optional PR argument (number or URL).
@@ -41,32 +42,6 @@ const reviewOptions = {
   slow: slowOption,
   post: postOption,
 }
-
-/**
- * Check if gh CLI is installed.
- */
-const checkGhInstalled = (): Effect.Effect<boolean, never> =>
-  Effect.tryPromise({
-    try: async () => {
-      const proc = Bun.spawn(["gh", "--version"], { stdout: "pipe", stderr: "pipe" })
-      await proc.exited
-      return proc.exitCode === 0
-    },
-    catch: () => false,
-  }).pipe(Effect.catchAll(() => Effect.succeed(false)))
-
-/**
- * Check if gh CLI is authenticated.
- */
-const checkGhAuth = (): Effect.Effect<boolean, never> =>
-  Effect.tryPromise({
-    try: async () => {
-      const proc = Bun.spawn(["gh", "auth", "status"], { stdout: "pipe", stderr: "pipe" })
-      await proc.exited
-      return proc.exitCode === 0
-    },
-    catch: () => false,
-  }).pipe(Effect.catchAll(() => Effect.succeed(false)))
 
 /**
  * PR info from gh CLI.
@@ -201,43 +176,47 @@ interface ExistingComment {
 const getExistingComments = (prNumber: number): Effect.Effect<readonly ExistingComment[], GitError> =>
   Effect.tryPromise({
     try: async () => {
-      // Get review comments (inline comments)
-      const proc = Bun.spawn(
-        ["gh", "api", `repos/{owner}/{repo}/pulls/${prNumber}/comments`, "--jq", ".[].path, .[].line, .[].body"],
-        { stdout: "pipe", stderr: "pipe" }
-      )
-      await proc.exited
-
-      // Also get issue comments (general PR comments)
-      const proc2 = Bun.spawn(
-        ["gh", "pr", "view", String(prNumber), "--json", "comments", "--jq", ".comments[].body"],
-        { stdout: "pipe", stderr: "pipe" }
-      )
-      const stdout2 = await new Response(proc2.stdout).text()
-      await proc2.exited
-
-      // Parse review comments - gh api returns JSON array
       const comments: ExistingComment[] = []
 
-      try {
-        const proc3 = Bun.spawn(
-          ["gh", "api", `repos/{owner}/{repo}/pulls/${prNumber}/comments`],
-          { stdout: "pipe", stderr: "pipe" }
-        )
-        const json = await new Response(proc3.stdout).text()
-        await proc3.exited
+      // Get inline review comments
+      const [inlineProc, generalProc] = await Promise.all([
+        (async () => {
+          const proc = Bun.spawn(
+            ["gh", "api", `repos/{owner}/{repo}/pulls/${prNumber}/comments`],
+            { stdout: "pipe", stderr: "pipe" }
+          )
+          const json = await new Response(proc.stdout).text()
+          await proc.exited
+          return { exitCode: proc.exitCode, json }
+        })(),
+        (async () => {
+          const proc = Bun.spawn(
+            ["gh", "pr", "view", String(prNumber), "--json", "comments", "--jq", ".comments[].body"],
+            { stdout: "pipe", stderr: "pipe" }
+          )
+          const stdout = await new Response(proc.stdout).text()
+          await proc.exited
+          return { exitCode: proc.exitCode, stdout }
+        })(),
+      ])
 
-        const parsed = JSON.parse(json) as Array<{ path: string; line: number | null; body: string }>
-        for (const c of parsed) {
-          comments.push({ path: c.path, line: c.line, body: c.body })
+      // Parse inline comments
+      if (inlineProc.exitCode === 0 && inlineProc.json.trim()) {
+        try {
+          const parsed = JSON.parse(inlineProc.json) as Array<{ path: string; line: number | null; body: string }>
+          for (const c of parsed) {
+            comments.push({ path: c.path, line: c.line, body: c.body })
+          }
+        } catch {
+          // Ignore parse errors
         }
-      } catch {
-        // Ignore parse errors
       }
 
-      // Add general comments (no file/line)
-      for (const line of stdout2.split("\n").filter(Boolean)) {
-        comments.push({ path: "", line: null, body: line })
+      // Add general PR comments (no file/line)
+      if (generalProc.exitCode === 0) {
+        for (const line of generalProc.stdout.split("\n").filter(Boolean)) {
+          comments.push({ path: "", line: null, body: line })
+        }
       }
 
       return comments
@@ -606,24 +585,8 @@ export const reviewCommand = Command.make(
     Effect.gen(function* () {
       const ai = yield* AIService
 
-      // Check gh CLI
-      const ghInstalled = yield* checkGhInstalled()
-      if (!ghInstalled) {
-        return yield* Effect.fail(
-          new UserError({
-            message: "GitHub CLI (gh) not found.\n  Install: https://cli.github.com/",
-          })
-        )
-      }
-
-      const ghAuthed = yield* checkGhAuth()
-      if (!ghAuthed) {
-        return yield* Effect.fail(
-          new UserError({
-            message: "GitHub CLI not authenticated.\n  Run: gh auth login",
-          })
-        )
-      }
+      // Check gh CLI is installed and authenticated
+      yield* requireGhCli()
 
       // Determine which PR to review
       let prInfo: PRInfo | null = null

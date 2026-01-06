@@ -5,6 +5,7 @@ import { ConfigService } from "../../services/config/service"
 import { GitService } from "../../services/git/service"
 import { UserError, GitError } from "../../types/errors"
 import { confirmWithEdit } from "../../core/prompt"
+import { requireGhCli } from "../../core/gh-utils"
 
 /**
  * Speed tier options.
@@ -57,32 +58,6 @@ const prOptions = {
   base: baseOption,
   context: contextOption,
 }
-
-/**
- * Check if gh CLI is installed.
- */
-const checkGhInstalled = (): Effect.Effect<boolean, never> =>
-  Effect.tryPromise({
-    try: async () => {
-      const proc = Bun.spawn(["gh", "--version"], { stdout: "pipe", stderr: "pipe" })
-      await proc.exited
-      return proc.exitCode === 0
-    },
-    catch: () => false,
-  }).pipe(Effect.catchAll(() => Effect.succeed(false)))
-
-/**
- * Check if gh CLI is authenticated.
- */
-const checkGhAuth = (): Effect.Effect<boolean, never> =>
-  Effect.tryPromise({
-    try: async () => {
-      const proc = Bun.spawn(["gh", "auth", "status"], { stdout: "pipe", stderr: "pipe" })
-      await proc.exited
-      return proc.exitCode === 0
-    },
-    catch: () => false,
-  }).pipe(Effect.catchAll(() => Effect.succeed(false)))
 
 /**
  * Create PR using gh CLI.
@@ -154,24 +129,8 @@ export const prCommand = Command.make(
         )
       }
 
-      // Check gh CLI
-      const ghInstalled = yield* checkGhInstalled()
-      if (!ghInstalled) {
-        return yield* Effect.fail(
-          new UserError({
-            message: "GitHub CLI (gh) not found.\n  Install: https://cli.github.com/",
-          })
-        )
-      }
-
-      const ghAuthed = yield* checkGhAuth()
-      if (!ghAuthed) {
-        return yield* Effect.fail(
-          new UserError({
-            message: "GitHub CLI not authenticated.\n  Run: gh auth login",
-          })
-        )
-      }
+      // Check gh CLI is installed and authenticated
+      yield* requireGhCli()
 
       // Get current branch
       const branchName = yield* git.getBranchName()
