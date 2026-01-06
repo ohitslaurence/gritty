@@ -94,7 +94,7 @@ A single commit is often the right answer - only split when genuinely beneficial
 </when_to_split>
 
 <rules>
-- Each commit MUST be atomic (builds and works independently)
+- Each commit should be logically atomic (don't split tightly coupled changes)
 - Always keep implementations with their tests in the same commit
 - Commit titles: imperative mood, max 72 chars, no trailing period
 - Order commits logically: dependencies/setup before features
