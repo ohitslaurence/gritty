@@ -77,7 +77,15 @@ export interface AIServiceImpl {
    */
   readonly reviewPR: (
     diff: DiffContent,
-    options: { speed: SpeedTier; title: string; description: string }
+    options: {
+      speed: SpeedTier
+      title: string
+      description: string
+      /** Repository guidelines from CLAUDE.md/agents.md */
+      guidelines?: string
+      /** README content for project context */
+      readme?: string
+    }
   ) => Effect.Effect<PRReview, AIError>
 }
 
