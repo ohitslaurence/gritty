@@ -77,6 +77,7 @@ const buildComposeSystemPrompt = (): string => {
 <task>
 Analyze the provided diffs and determine the optimal commit structure.
 A single commit is often the right answer - only split when genuinely beneficial.
+Your job is purely to analyze the code and suggest groupings - nothing will be executed.
 </task>
 
 <when_to_use_single_commit>
