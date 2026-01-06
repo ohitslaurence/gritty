@@ -1,11 +1,11 @@
-import Anthropic from "@anthropic-ai/sdk"
+import { generateText } from "ai"
 import { Effect, Layer } from "effect"
 import { CommitMessage, type DiffContent } from "../../types/branded"
 import { AIError } from "../../types/errors"
 import type { GenerateOptions } from "../../types/models"
 import type { FilePreview, FileGroup, ChunkReviewResult } from "../../types/review-state"
-import { AuthService } from "../auth/service"
 import { ConfigService } from "../config/service"
+import { ProviderService } from "../provider/service"
 import { AIService, type ProposedCommit, type PRDescription, type PRReview } from "./service"
 
 /**
@@ -632,44 +632,37 @@ ${commitList}`
 }
 
 /**
- * Live implementation of AIService using Anthropic SDK.
- * Gets API key from AuthService (env var or stored credentials).
+ * Check if an error is a rate limit error.
+ */
+const isRateLimitError = (error: unknown): boolean => {
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase()
+    return (
+      message.includes("rate limit") ||
+      message.includes("rate_limit") ||
+      message.includes("429") ||
+      message.includes("too many requests")
+    )
+  }
+  return false
+}
+
+/**
+ * Live implementation of AIService using AI SDK.
+ * Uses ProviderService for multi-provider support.
  * Gets model configuration from ConfigService.
  */
 export const AIServiceLive = Layer.effect(
   AIService,
   Effect.gen(function* () {
-    const auth = yield* AuthService
     const config = yield* ConfigService
+    const provider = yield* ProviderService
 
     return AIService.of({
       generateCommitMessage: (diff, options) =>
         Effect.gen(function* () {
-          // Get API key from auth service
-          const apiKey = yield* auth.getApiKey().pipe(
-            Effect.mapError(
-              (e) =>
-                new AIError({
-                  message: `Auth error: ${e.message}`,
-                  retryable: false,
-                  cause: e,
-                })
-            )
-          )
-
-          if (!apiKey) {
-            return yield* Effect.fail(
-              new AIError({
-                message:
-                  "Not authenticated. Run 'gritty auth login' or set ANTHROPIC_API_KEY.",
-                retryable: false,
-                cause: undefined,
-              })
-            )
-          }
-
-          // Get model from config (with fallback to defaults)
-          const model = yield* config.getModel(options.speed).pipe(
+          // Get model reference from config
+          const modelRef = yield* config.getModel(options.speed).pipe(
             Effect.mapError(
               (e) =>
                 new AIError({
@@ -680,72 +673,33 @@ export const AIServiceLive = Layer.effect(
             )
           )
 
-          // Create client with the API key
-          const client = new Anthropic({ apiKey })
+          // Get the language model from provider service
+          const model = yield* provider.getModel(modelRef)
 
           return yield* Effect.tryPromise({
             try: async () => {
-              const response = await client.messages.create({
+              const { text } = await generateText({
                 model,
-                max_tokens: 1024,
+                maxOutputTokens: 1024,
                 system: buildSystemPrompt(options),
-                messages: [
-                  {
-                    role: "user",
-                    content: buildUserPrompt(diff, options.context),
-                  },
-                ],
+                prompt: buildUserPrompt(diff, options.context),
               })
 
-              // Extract text from response
-              const textBlock = response.content.find((block) => block.type === "text")
-              if (!textBlock || textBlock.type !== "text") {
-                throw new Error("No text content in response")
-              }
-
-              return CommitMessage(textBlock.text.trim())
+              return CommitMessage(text.trim())
             },
-            catch: (error) => {
-              const isRateLimit =
-                error instanceof Anthropic.RateLimitError ||
-                (error instanceof Error && error.message.includes("rate limit"))
-
-              return new AIError({
+            catch: (error) =>
+              new AIError({
                 message: error instanceof Error ? error.message : String(error),
-                retryable: isRateLimit,
+                retryable: isRateLimitError(error),
                 cause: error,
-              })
-            },
+              }),
           })
         }),
 
       composeCommits: (files, options) =>
         Effect.gen(function* () {
-          // Get API key from auth service
-          const apiKey = yield* auth.getApiKey().pipe(
-            Effect.mapError(
-              (e) =>
-                new AIError({
-                  message: `Auth error: ${e.message}`,
-                  retryable: false,
-                  cause: e,
-                })
-            )
-          )
-
-          if (!apiKey) {
-            return yield* Effect.fail(
-              new AIError({
-                message:
-                  "Not authenticated. Run 'gritty auth login' or set ANTHROPIC_API_KEY.",
-                retryable: false,
-                cause: undefined,
-              })
-            )
-          }
-
-          // Get model from config (with fallback to defaults)
-          const model = yield* config.getModel(options.speed).pipe(
+          // Get model reference from config
+          const modelRef = yield* config.getModel(options.speed).pipe(
             Effect.mapError(
               (e) =>
                 new AIError({
@@ -756,72 +710,33 @@ export const AIServiceLive = Layer.effect(
             )
           )
 
-          // Create client with the API key
-          const client = new Anthropic({ apiKey })
+          // Get the language model from provider service
+          const model = yield* provider.getModel(modelRef)
 
           return yield* Effect.tryPromise({
             try: async () => {
-              const response = await client.messages.create({
+              const { text } = await generateText({
                 model,
-                max_tokens: 4096,
+                maxOutputTokens: 4096,
                 system: buildComposeSystemPrompt(),
-                messages: [
-                  {
-                    role: "user",
-                    content: buildComposeUserPrompt(files, options.feedback),
-                  },
-                ],
+                prompt: buildComposeUserPrompt(files, options.feedback),
               })
 
-              // Extract text from response
-              const textBlock = response.content.find((block) => block.type === "text")
-              if (!textBlock || textBlock.type !== "text") {
-                throw new Error("No text content in response")
-              }
-
-              return parseComposeResponse(textBlock.text.trim())
+              return parseComposeResponse(text.trim())
             },
-            catch: (error) => {
-              const isRateLimit =
-                error instanceof Anthropic.RateLimitError ||
-                (error instanceof Error && error.message.includes("rate limit"))
-
-              return new AIError({
+            catch: (error) =>
+              new AIError({
                 message: error instanceof Error ? error.message : String(error),
-                retryable: isRateLimit,
+                retryable: isRateLimitError(error),
                 cause: error,
-              })
-            },
+              }),
           })
         }),
 
       generatePRDescription: (commits, diff, options) =>
         Effect.gen(function* () {
-          // Get API key from auth service
-          const apiKey = yield* auth.getApiKey().pipe(
-            Effect.mapError(
-              (e) =>
-                new AIError({
-                  message: `Auth error: ${e.message}`,
-                  retryable: false,
-                  cause: e,
-                })
-            )
-          )
-
-          if (!apiKey) {
-            return yield* Effect.fail(
-              new AIError({
-                message:
-                  "Not authenticated. Run 'gritty auth login' or set ANTHROPIC_API_KEY.",
-                retryable: false,
-                cause: undefined,
-              })
-            )
-          }
-
-          // Get model from config (with fallback to defaults)
-          const model = yield* config.getModel(options.speed).pipe(
+          // Get model reference from config
+          const modelRef = yield* config.getModel(options.speed).pipe(
             Effect.mapError(
               (e) =>
                 new AIError({
@@ -832,72 +747,33 @@ export const AIServiceLive = Layer.effect(
             )
           )
 
-          // Create client with the API key
-          const client = new Anthropic({ apiKey })
+          // Get the language model from provider service
+          const model = yield* provider.getModel(modelRef)
 
           return yield* Effect.tryPromise({
             try: async () => {
-              const response = await client.messages.create({
+              const { text } = await generateText({
                 model,
-                max_tokens: 2048,
+                maxOutputTokens: 2048,
                 system: buildPRSystemPrompt(),
-                messages: [
-                  {
-                    role: "user",
-                    content: buildPRUserPrompt(commits, diff, options),
-                  },
-                ],
+                prompt: buildPRUserPrompt(commits, diff, options),
               })
 
-              // Extract text from response
-              const textBlock = response.content.find((block) => block.type === "text")
-              if (!textBlock || textBlock.type !== "text") {
-                throw new Error("No text content in response")
-              }
-
-              return parsePRResponse(textBlock.text.trim())
+              return parsePRResponse(text.trim())
             },
-            catch: (error) => {
-              const isRateLimit =
-                error instanceof Anthropic.RateLimitError ||
-                (error instanceof Error && error.message.includes("rate limit"))
-
-              return new AIError({
+            catch: (error) =>
+              new AIError({
                 message: error instanceof Error ? error.message : String(error),
-                retryable: isRateLimit,
+                retryable: isRateLimitError(error),
                 cause: error,
-              })
-            },
+              }),
           })
         }),
 
       reviewPR: (diff, options) =>
         Effect.gen(function* () {
-          // Get API key from auth service
-          const apiKey = yield* auth.getApiKey().pipe(
-            Effect.mapError(
-              (e) =>
-                new AIError({
-                  message: `Auth error: ${e.message}`,
-                  retryable: false,
-                  cause: e,
-                })
-            )
-          )
-
-          if (!apiKey) {
-            return yield* Effect.fail(
-              new AIError({
-                message:
-                  "Not authenticated. Run 'gritty auth login' or set ANTHROPIC_API_KEY.",
-                retryable: false,
-                cause: undefined,
-              })
-            )
-          }
-
-          // Get model from config (with fallback to defaults)
-          const model = yield* config.getModel(options.speed).pipe(
+          // Get model reference from config
+          const modelRef = yield* config.getModel(options.speed).pipe(
             Effect.mapError(
               (e) =>
                 new AIError({
@@ -908,72 +784,33 @@ export const AIServiceLive = Layer.effect(
             )
           )
 
-          // Create client with the API key
-          const client = new Anthropic({ apiKey })
+          // Get the language model from provider service
+          const model = yield* provider.getModel(modelRef)
 
           return yield* Effect.tryPromise({
             try: async () => {
-              const response = await client.messages.create({
+              const { text } = await generateText({
                 model,
-                max_tokens: 4096,
+                maxOutputTokens: 4096,
                 system: buildReviewSystemPrompt(options),
-                messages: [
-                  {
-                    role: "user",
-                    content: buildReviewUserPrompt(diff, options),
-                  },
-                ],
+                prompt: buildReviewUserPrompt(diff, options),
               })
 
-              // Extract text from response
-              const textBlock = response.content.find((block) => block.type === "text")
-              if (!textBlock || textBlock.type !== "text") {
-                throw new Error("No text content in response")
-              }
-
-              return parseReviewResponse(textBlock.text.trim())
+              return parseReviewResponse(text.trim())
             },
-            catch: (error) => {
-              const isRateLimit =
-                error instanceof Anthropic.RateLimitError ||
-                (error instanceof Error && error.message.includes("rate limit"))
-
-              return new AIError({
+            catch: (error) =>
+              new AIError({
                 message: error instanceof Error ? error.message : String(error),
-                retryable: isRateLimit,
+                retryable: isRateLimitError(error),
                 cause: error,
-              })
-            },
+              }),
           })
         }),
 
       groupFilesForReview: (files, options) =>
         Effect.gen(function* () {
-          // Get API key from auth service
-          const apiKey = yield* auth.getApiKey().pipe(
-            Effect.mapError(
-              (e) =>
-                new AIError({
-                  message: `Auth error: ${e.message}`,
-                  retryable: false,
-                  cause: e,
-                })
-            )
-          )
-
-          if (!apiKey) {
-            return yield* Effect.fail(
-              new AIError({
-                message:
-                  "Not authenticated. Run 'gritty auth login' or set ANTHROPIC_API_KEY.",
-                retryable: false,
-                cause: undefined,
-              })
-            )
-          }
-
           // Use fast model for grouping
-          const model = yield* config.getModel("fast").pipe(
+          const modelRef = yield* config.getModel("fast").pipe(
             Effect.mapError(
               (e) =>
                 new AIError({
@@ -984,72 +821,33 @@ export const AIServiceLive = Layer.effect(
             )
           )
 
-          // Create client with the API key
-          const client = new Anthropic({ apiKey })
+          // Get the language model from provider service
+          const model = yield* provider.getModel(modelRef)
 
           return yield* Effect.tryPromise({
             try: async () => {
-              const response = await client.messages.create({
+              const { text } = await generateText({
                 model,
-                max_tokens: 2048,
+                maxOutputTokens: 2048,
                 system: buildGroupingSystemPrompt(),
-                messages: [
-                  {
-                    role: "user",
-                    content: buildGroupingUserPrompt(files, options),
-                  },
-                ],
+                prompt: buildGroupingUserPrompt(files, options),
               })
 
-              // Extract text from response
-              const textBlock = response.content.find((block) => block.type === "text")
-              if (!textBlock || textBlock.type !== "text") {
-                throw new Error("No text content in response")
-              }
-
-              return parseGroupingResponse(textBlock.text.trim())
+              return parseGroupingResponse(text.trim())
             },
-            catch: (error) => {
-              const isRateLimit =
-                error instanceof Anthropic.RateLimitError ||
-                (error instanceof Error && error.message.includes("rate limit"))
-
-              return new AIError({
+            catch: (error) =>
+              new AIError({
                 message: error instanceof Error ? error.message : String(error),
-                retryable: isRateLimit,
+                retryable: isRateLimitError(error),
                 cause: error,
-              })
-            },
+              }),
           })
         }),
 
       reviewChunk: (chunk, options) =>
         Effect.gen(function* () {
-          // Get API key from auth service
-          const apiKey = yield* auth.getApiKey().pipe(
-            Effect.mapError(
-              (e) =>
-                new AIError({
-                  message: `Auth error: ${e.message}`,
-                  retryable: false,
-                  cause: e,
-                })
-            )
-          )
-
-          if (!apiKey) {
-            return yield* Effect.fail(
-              new AIError({
-                message:
-                  "Not authenticated. Run 'gritty auth login' or set ANTHROPIC_API_KEY.",
-                retryable: false,
-                cause: undefined,
-              })
-            )
-          }
-
           // Use slow model for quality review
-          const model = yield* config.getModel("slow").pipe(
+          const modelRef = yield* config.getModel("slow").pipe(
             Effect.mapError(
               (e) =>
                 new AIError({
@@ -1060,61 +858,33 @@ export const AIServiceLive = Layer.effect(
             )
           )
 
-          // Create client with the API key
-          const client = new Anthropic({ apiKey })
+          // Get the language model from provider service
+          const model = yield* provider.getModel(modelRef)
 
           return yield* Effect.tryPromise({
             try: async () => {
-              const response = await client.messages.create({
+              const { text } = await generateText({
                 model,
-                max_tokens: 4096,
+                maxOutputTokens: 4096,
                 system: buildChunkReviewSystemPrompt(options),
-                messages: [
-                  {
-                    role: "user",
-                    content: buildChunkReviewUserPrompt(chunk, options),
-                  },
-                ],
+                prompt: buildChunkReviewUserPrompt(chunk, options),
               })
 
-              // Extract text from response
-              const textBlock = response.content.find((block) => block.type === "text")
-              if (!textBlock || textBlock.type !== "text") {
-                throw new Error("No text content in response")
-              }
-
-              return parseChunkReviewResponse(textBlock.text.trim(), chunk.groupId)
+              return parseChunkReviewResponse(text.trim(), chunk.groupId)
             },
-            catch: (error) => {
-              const isRateLimit =
-                error instanceof Anthropic.RateLimitError ||
-                (error instanceof Error && error.message.includes("rate limit"))
-
-              return new AIError({
+            catch: (error) =>
+              new AIError({
                 message: error instanceof Error ? error.message : String(error),
-                retryable: isRateLimit,
+                retryable: isRateLimitError(error),
                 cause: error,
-              })
-            },
+              }),
           })
         }),
 
       generateChangelog: (commits, options) =>
         Effect.gen(function* () {
-          // Get API key from auth service
-          const apiKey = yield* auth.getApiKey().pipe(
-            Effect.mapError(
-              (e) =>
-                new AIError({
-                  message: `Auth error: ${e.message}`,
-                  retryable: false,
-                  cause: e,
-                })
-            )
-          )
-
-          // Get model from config
-          const model = yield* config.getModel(options.speed).pipe(
+          // Get model reference from config
+          const modelRef = yield* config.getModel(options.speed).pipe(
             Effect.mapError(
               (e) =>
                 new AIError({
@@ -1125,41 +895,26 @@ export const AIServiceLive = Layer.effect(
             )
           )
 
-          const client = new Anthropic({ apiKey })
+          // Get the language model from provider service
+          const model = yield* provider.getModel(modelRef)
 
           return yield* Effect.tryPromise({
             try: async () => {
-              const response = await client.messages.create({
+              const { text } = await generateText({
                 model,
-                max_tokens: 4096,
+                maxOutputTokens: 4096,
                 system: buildChangelogSystemPrompt(),
-                messages: [
-                  {
-                    role: "user",
-                    content: buildChangelogUserPrompt(commits),
-                  },
-                ],
+                prompt: buildChangelogUserPrompt(commits),
               })
 
-              // Extract text from response
-              const textBlock = response.content.find((block) => block.type === "text")
-              if (!textBlock || textBlock.type !== "text") {
-                throw new Error("No text content in response")
-              }
-
-              return textBlock.text.trim()
+              return text.trim()
             },
-            catch: (error) => {
-              const isRateLimit =
-                error instanceof Anthropic.RateLimitError ||
-                (error instanceof Error && error.message.includes("rate limit"))
-
-              return new AIError({
+            catch: (error) =>
+              new AIError({
                 message: error instanceof Error ? error.message : String(error),
-                retryable: isRateLimit,
+                retryable: isRateLimitError(error),
                 cause: error,
-              })
-            },
+              }),
           })
         }),
     })

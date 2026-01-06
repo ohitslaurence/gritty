@@ -5,6 +5,7 @@ import { AIServiceLive } from "../services/ai/live"
 import { AuthServiceLive } from "../services/auth/live"
 import { ConfigServiceLive } from "../services/config/live"
 import { GitServiceLive } from "../services/git/live"
+import { ProviderServiceLive } from "../services/provider/live"
 import { StateServiceLive } from "../services/state/live"
 import { ReviewStateServiceLive } from "../services/review-state/live"
 import { authCommand } from "./commands/auth"
@@ -27,10 +28,15 @@ const grittyCommand = Command.make("gritty").pipe(
 
 /**
  * The application layer with all services.
- * AIServiceLive depends on AuthServiceLive and ConfigServiceLive.
+ * ProviderServiceLive depends on ConfigServiceLive and AuthServiceLive.
+ * AIServiceLive depends on ConfigServiceLive and ProviderServiceLive.
  */
+const ProviderWithDeps = ProviderServiceLive.pipe(
+  Layer.provide(Layer.merge(ConfigServiceLive, AuthServiceLive))
+)
+
 const AIWithDeps = AIServiceLive.pipe(
-  Layer.provide(Layer.merge(AuthServiceLive, ConfigServiceLive))
+  Layer.provide(Layer.merge(ConfigServiceLive, ProviderWithDeps))
 )
 
 const AppLayer = Layer.mergeAll(
