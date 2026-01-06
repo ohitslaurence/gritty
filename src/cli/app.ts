@@ -9,13 +9,14 @@ import { StateServiceLive } from "../services/state/live"
 import { authCommand } from "./commands/auth"
 import { commitCommand } from "./commands/commit"
 import { composeCommand } from "./commands/compose"
+import { configCommand } from "./commands/config"
 
 /**
  * The main gritty CLI command.
  */
 const grittyCommand = Command.make("gritty").pipe(
   Command.withDescription("AI-powered Git CLI tool"),
-  Command.withSubcommands([commitCommand, composeCommand, authCommand])
+  Command.withSubcommands([commitCommand, composeCommand, authCommand, configCommand])
 )
 
 /**
