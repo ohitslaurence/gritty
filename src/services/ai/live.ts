@@ -2,8 +2,9 @@ import Anthropic from "@anthropic-ai/sdk"
 import { Effect, Layer } from "effect"
 import { CommitMessage, type DiffContent } from "../../types/branded"
 import { AIError } from "../../types/errors"
-import { MODEL_IDS, type GenerateOptions } from "../../types/models"
+import type { GenerateOptions } from "../../types/models"
 import { AuthService } from "../auth/service"
+import { ConfigService } from "../config/service"
 import { AIService, type ProposedCommit } from "./service"
 
 /**
@@ -166,11 +167,13 @@ const parseComposeResponse = (response: string): readonly ProposedCommit[] => {
 /**
  * Live implementation of AIService using Anthropic SDK.
  * Gets API key from AuthService (env var or stored credentials).
+ * Gets model configuration from ConfigService.
  */
 export const AIServiceLive = Layer.effect(
   AIService,
   Effect.gen(function* () {
     const auth = yield* AuthService
+    const config = yield* ConfigService
 
     return AIService.of({
       generateCommitMessage: (diff, options) =>
@@ -198,13 +201,25 @@ export const AIServiceLive = Layer.effect(
             )
           }
 
+          // Get model from config (with fallback to defaults)
+          const model = yield* config.getModel(options.speed).pipe(
+            Effect.mapError(
+              (e) =>
+                new AIError({
+                  message: `Config error: ${e.message}`,
+                  retryable: false,
+                  cause: e,
+                })
+            )
+          )
+
           // Create client with the API key
           const client = new Anthropic({ apiKey })
 
           return yield* Effect.tryPromise({
             try: async () => {
               const response = await client.messages.create({
-                model: MODEL_IDS[options.speed],
+                model,
                 max_tokens: 1024,
                 system: buildSystemPrompt(options),
                 messages: [
@@ -262,13 +277,25 @@ export const AIServiceLive = Layer.effect(
             )
           }
 
+          // Get model from config (with fallback to defaults)
+          const model = yield* config.getModel(options.speed).pipe(
+            Effect.mapError(
+              (e) =>
+                new AIError({
+                  message: `Config error: ${e.message}`,
+                  retryable: false,
+                  cause: e,
+                })
+            )
+          )
+
           // Create client with the API key
           const client = new Anthropic({ apiKey })
 
           return yield* Effect.tryPromise({
             try: async () => {
               const response = await client.messages.create({
-                model: MODEL_IDS[options.speed],
+                model,
                 max_tokens: 4096,
                 system: buildComposeSystemPrompt(),
                 messages: [

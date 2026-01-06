@@ -1,6 +1,6 @@
 import { Context, Effect, Schema } from "effect"
 import type { ConfigError } from "../../types/errors"
-import type { ModelId, SpeedTier } from "../../types/models"
+import type { SpeedTier } from "../../types/models"
 
 /**
  * Configuration schema for .gritty.json files.
@@ -16,7 +16,10 @@ export const GrittyConfigSchema = Schema.Struct({
       model: Schema.optional(
         Schema.Struct({
           default: Schema.optional(Schema.Literal("fast", "medium", "slow")),
-          override: Schema.optional(Schema.String),
+          // Custom model IDs for each speed tier
+          fast: Schema.optional(Schema.String),
+          medium: Schema.optional(Schema.String),
+          slow: Schema.optional(Schema.String),
         })
       ),
     })
@@ -36,8 +39,9 @@ export interface ConfigServiceImpl {
 
   /**
    * Get the model ID for a given speed tier.
+   * Returns configured model or falls back to defaults.
    */
-  readonly getModel: (speed: SpeedTier) => ModelId
+  readonly getModel: (speed: SpeedTier) => Effect.Effect<string, ConfigError>
 
   /**
    * Get the default speed tier from config.

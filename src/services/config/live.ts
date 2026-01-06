@@ -1,6 +1,6 @@
 import { Effect, Layer, Schema } from "effect"
 import { ConfigError } from "../../types/errors"
-import { MODEL_IDS, type ModelId, type SpeedTier } from "../../types/models"
+import { MODEL_IDS, type SpeedTier } from "../../types/models"
 import { ConfigService, GrittyConfigSchema, type GrittyConfig } from "./service"
 
 /**
@@ -95,9 +95,16 @@ const makeConfigService = (): ConfigService["Type"] => {
   return {
     load,
 
-    getModel: (speed: SpeedTier): ModelId => {
-      return MODEL_IDS[speed]
-    },
+    getModel: (speed: SpeedTier) =>
+      Effect.gen(function* () {
+        const config = yield* load()
+        // Check for custom model in config, fall back to defaults
+        const customModel = config.commit?.model?.[speed]
+        if (customModel) {
+          return customModel
+        }
+        return MODEL_IDS[speed]
+      }),
 
     getDefaultSpeed: () =>
       Effect.gen(function* () {

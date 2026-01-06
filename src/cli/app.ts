@@ -21,13 +21,15 @@ const grittyCommand = Command.make("gritty").pipe(
 
 /**
  * The application layer with all services.
- * AIServiceLive depends on AuthServiceLive, so we provide it.
+ * AIServiceLive depends on AuthServiceLive and ConfigServiceLive.
  */
-const AIWithAuth = AIServiceLive.pipe(Layer.provide(AuthServiceLive))
+const AIWithDeps = AIServiceLive.pipe(
+  Layer.provide(Layer.merge(AuthServiceLive, ConfigServiceLive))
+)
 
 const AppLayer = Layer.mergeAll(
   GitServiceLive,
-  AIWithAuth,
+  AIWithDeps,
   AuthServiceLive,
   ConfigServiceLive,
   StateServiceLive
