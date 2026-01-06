@@ -585,6 +585,53 @@ const parseChunkReviewResponse = (response: string, groupId: string): ChunkRevie
 }
 
 /**
+ * Build the system prompt for changelog generation.
+ */
+const buildChangelogSystemPrompt = (): string => `You are an expert at writing clear, concise changelogs.
+
+<task>
+Generate a changelog from git commit messages. Group related changes and produce clean markdown.
+</task>
+
+<rules>
+1. Group commits by type: Features, Fixes, Improvements, Documentation, Other
+2. Combine related commits into single entries (e.g., "Add X" and "Fix X typo" become one entry)
+3. Rewrite commit messages to be user-friendly and consistent
+4. Use past tense ("Added" not "Add")
+5. Remove commit hashes, PR numbers, and technical details
+6. Skip merge commits, version bumps, and trivial changes
+7. If a section would be empty, omit it entirely
+</rules>
+
+<format>
+## Features
+- Added new feature description
+
+## Fixes
+- Fixed bug description
+
+## Improvements
+- Improved something description
+</format>
+
+Output ONLY the markdown changelog, no preamble or explanation.`
+
+/**
+ * Build the user prompt for changelog generation.
+ */
+const buildChangelogUserPrompt = (
+  commits: readonly { hash: string; message: string; author: string; date: string }[]
+): string => {
+  const commitList = commits
+    .map((c) => `- ${c.hash.slice(0, 7)} | ${c.date} | ${c.author} | ${c.message}`)
+    .join("\n")
+
+  return `Generate a changelog from these ${commits.length} commits:
+
+${commitList}`
+}
+
+/**
  * Live implementation of AIService using Anthropic SDK.
  * Gets API key from AuthService (env var or stored credentials).
  * Gets model configuration from ConfigService.
@@ -1037,6 +1084,70 @@ export const AIServiceLive = Layer.effect(
               }
 
               return parseChunkReviewResponse(textBlock.text.trim(), chunk.groupId)
+            },
+            catch: (error) => {
+              const isRateLimit =
+                error instanceof Anthropic.RateLimitError ||
+                (error instanceof Error && error.message.includes("rate limit"))
+
+              return new AIError({
+                message: error instanceof Error ? error.message : String(error),
+                retryable: isRateLimit,
+                cause: error,
+              })
+            },
+          })
+        }),
+
+      generateChangelog: (commits, options) =>
+        Effect.gen(function* () {
+          // Get API key from auth service
+          const apiKey = yield* auth.getApiKey().pipe(
+            Effect.mapError(
+              (e) =>
+                new AIError({
+                  message: `Auth error: ${e.message}`,
+                  retryable: false,
+                  cause: e,
+                })
+            )
+          )
+
+          // Get model from config
+          const model = yield* config.getModel(options.speed).pipe(
+            Effect.mapError(
+              (e) =>
+                new AIError({
+                  message: `Config error: ${e.message}`,
+                  retryable: false,
+                  cause: e,
+                })
+            )
+          )
+
+          const client = new Anthropic({ apiKey })
+
+          return yield* Effect.tryPromise({
+            try: async () => {
+              const response = await client.messages.create({
+                model,
+                max_tokens: 4096,
+                system: buildChangelogSystemPrompt(),
+                messages: [
+                  {
+                    role: "user",
+                    content: buildChangelogUserPrompt(commits),
+                  },
+                ],
+              })
+
+              // Extract text from response
+              const textBlock = response.content.find((block) => block.type === "text")
+              if (!textBlock || textBlock.type !== "text") {
+                throw new Error("No text content in response")
+              }
+
+              return textBlock.text.trim()
             },
             catch: (error) => {
               const isRateLimit =

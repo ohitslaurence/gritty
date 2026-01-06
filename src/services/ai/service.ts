@@ -119,6 +119,15 @@ export interface AIServiceImpl {
       readme?: string
     }
   ) => Effect.Effect<ChunkReviewResult, AIError>
+
+  /**
+   * Generate a changelog from commit messages.
+   * Groups commits by type and produces clean markdown.
+   */
+  readonly generateChangelog: (
+    commits: readonly { hash: string; message: string; author: string; date: string }[],
+    options: { speed: SpeedTier }
+  ) => Effect.Effect<string, AIError>
 }
 
 /**

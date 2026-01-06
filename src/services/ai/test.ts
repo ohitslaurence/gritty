@@ -44,6 +44,15 @@ const DEFAULT_CHUNK_REVIEW = {
 }
 
 /**
+ * Default changelog for tests.
+ */
+const DEFAULT_CHANGELOG = `## Features
+- Added new feature
+
+## Fixes
+- Fixed a bug`
+
+/**
  * Create a test AIService with configurable behavior.
  */
 export const TestAIService = {
@@ -63,6 +72,7 @@ export const TestAIService = {
         reviewPR: () => Effect.succeed(DEFAULT_PR_REVIEW),
         groupFilesForReview: () => Effect.succeed(DEFAULT_FILE_GROUPS),
         reviewChunk: () => Effect.succeed(DEFAULT_CHUNK_REVIEW),
+        generateChangelog: () => Effect.succeed(DEFAULT_CHANGELOG),
       })
     ),
 
@@ -94,6 +104,9 @@ export const TestAIService = {
         reviewChunk:
           impl.reviewChunk ??
           (() => Effect.succeed(DEFAULT_CHUNK_REVIEW)),
+        generateChangelog:
+          impl.generateChangelog ??
+          (() => Effect.succeed(DEFAULT_CHANGELOG)),
       })
     ),
 
@@ -116,6 +129,7 @@ export const TestAIService = {
         reviewPR: () => Effect.succeed(DEFAULT_PR_REVIEW),
         groupFilesForReview: () => Effect.succeed(DEFAULT_FILE_GROUPS),
         reviewChunk: () => Effect.succeed(DEFAULT_CHUNK_REVIEW),
+        generateChangelog: () => Effect.succeed(DEFAULT_CHANGELOG),
       })
     ),
 
@@ -132,6 +146,7 @@ export const TestAIService = {
         reviewPR: () => Effect.fail(error),
         groupFilesForReview: () => Effect.fail(error),
         reviewChunk: () => Effect.fail(error),
+        generateChangelog: () => Effect.fail(error),
       })
     ),
 
@@ -150,6 +165,7 @@ export const TestAIService = {
       reviewPR: () => Effect.succeed(DEFAULT_PR_REVIEW),
       groupFilesForReview: () => Effect.succeed(DEFAULT_FILE_GROUPS),
       reviewChunk: () => Effect.succeed(DEFAULT_CHUNK_REVIEW),
+      generateChangelog: () => Effect.succeed(DEFAULT_CHANGELOG),
     })
   ),
 }

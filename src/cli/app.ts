@@ -9,6 +9,7 @@ import { StateServiceLive } from "../services/state/live"
 import { ReviewStateServiceLive } from "../services/review-state/live"
 import { authCommand } from "./commands/auth"
 import { branchCommand } from "./commands/branch"
+import { changelogCommand } from "./commands/changelog"
 import { clearCommand } from "./commands/clear"
 import { commitCommand } from "./commands/commit"
 import { composeCommand } from "./commands/compose"
@@ -21,7 +22,7 @@ import { reviewCommand } from "./commands/review"
  */
 const grittyCommand = Command.make("gritty").pipe(
   Command.withDescription("AI-powered Git CLI tool"),
-  Command.withSubcommands([commitCommand, composeCommand, prCommand, reviewCommand, branchCommand, authCommand, configCommand, clearCommand])
+  Command.withSubcommands([commitCommand, composeCommand, prCommand, reviewCommand, changelogCommand, branchCommand, authCommand, configCommand, clearCommand])
 )
 
 /**
