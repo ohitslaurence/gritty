@@ -5,7 +5,7 @@ import { AIError } from "../../types/errors"
 import type { GenerateOptions } from "../../types/models"
 import { AuthService } from "../auth/service"
 import { ConfigService } from "../config/service"
-import { AIService, type ProposedCommit } from "./service"
+import { AIService, type ProposedCommit, type PRDescription } from "./service"
 
 /**
  * Format recent commits as examples for the prompt.
@@ -165,6 +165,80 @@ const parseComposeResponse = (response: string): readonly ProposedCommit[] => {
 }
 
 /**
+ * Build the system prompt for PR description generation.
+ */
+const buildPRSystemPrompt = (): string => {
+  return `You are an expert developer writing a pull request description.
+
+<task>
+Generate a clear, professional PR title and description from the commits and diff.
+</task>
+
+<guidelines>
+- Title: Clear summary of what this PR does, max 72 chars
+- Summary: 1-3 bullet points describing the key changes
+- Test plan: Practical testing steps (optional if obvious)
+</guidelines>
+
+<output_format>
+Return ONLY valid JSON, no markdown or explanation:
+{
+  "title": "Add user authentication with JWT",
+  "body": "## Summary\\n- Implement JWT token validation\\n- Add refresh token rotation\\n\\n## Test plan\\n- [ ] Verify login flow works\\n- [ ] Check token expiry handling"
+}
+</output_format>`
+}
+
+/**
+ * Build the user prompt for PR description generation.
+ */
+const buildPRUserPrompt = (
+  commits: readonly { message: string }[],
+  diff: string,
+  options: { context?: string; baseBranch: string; branchName: string }
+): string => {
+  const commitMessages = commits.map((c) => `- ${c.message}`).join("\n")
+  const truncatedDiff = diff.length > 8000 ? diff.slice(0, 8000) + "\n[...truncated]" : diff
+
+  let prompt = `<branch>
+From: ${options.branchName}
+To: ${options.baseBranch}
+</branch>
+
+<commits>
+${commitMessages}
+</commits>
+
+<diff>
+${truncatedDiff}
+</diff>`
+
+  if (options.context) {
+    prompt += `\n\n<context>${options.context}</context>`
+  }
+
+  return prompt
+}
+
+/**
+ * Parse the PR description response from AI.
+ */
+const parsePRResponse = (response: string): PRDescription => {
+  try {
+    const parsed = JSON.parse(response) as PRDescription
+    return parsed
+  } catch {
+    // Try to extract JSON from the response if it's wrapped in markdown
+    const jsonMatch = response.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]) as PRDescription
+      return parsed
+    }
+    throw new Error("Failed to parse AI response as JSON")
+  }
+}
+
+/**
  * Live implementation of AIService using Anthropic SDK.
  * Gets API key from AuthService (env var or stored credentials).
  * Gets model configuration from ConfigService.
@@ -313,6 +387,82 @@ export const AIServiceLive = Layer.effect(
               }
 
               return parseComposeResponse(textBlock.text.trim())
+            },
+            catch: (error) => {
+              const isRateLimit =
+                error instanceof Anthropic.RateLimitError ||
+                (error instanceof Error && error.message.includes("rate limit"))
+
+              return new AIError({
+                message: error instanceof Error ? error.message : String(error),
+                retryable: isRateLimit,
+                cause: error,
+              })
+            },
+          })
+        }),
+
+      generatePRDescription: (commits, diff, options) =>
+        Effect.gen(function* () {
+          // Get API key from auth service
+          const apiKey = yield* auth.getApiKey().pipe(
+            Effect.mapError(
+              (e) =>
+                new AIError({
+                  message: `Auth error: ${e.message}`,
+                  retryable: false,
+                  cause: e,
+                })
+            )
+          )
+
+          if (!apiKey) {
+            return yield* Effect.fail(
+              new AIError({
+                message:
+                  "Not authenticated. Run 'gritty auth login' or set ANTHROPIC_API_KEY.",
+                retryable: false,
+                cause: undefined,
+              })
+            )
+          }
+
+          // Get model from config (with fallback to defaults)
+          const model = yield* config.getModel(options.speed).pipe(
+            Effect.mapError(
+              (e) =>
+                new AIError({
+                  message: `Config error: ${e.message}`,
+                  retryable: false,
+                  cause: e,
+                })
+            )
+          )
+
+          // Create client with the API key
+          const client = new Anthropic({ apiKey })
+
+          return yield* Effect.tryPromise({
+            try: async () => {
+              const response = await client.messages.create({
+                model,
+                max_tokens: 2048,
+                system: buildPRSystemPrompt(),
+                messages: [
+                  {
+                    role: "user",
+                    content: buildPRUserPrompt(commits, diff, options),
+                  },
+                ],
+              })
+
+              // Extract text from response
+              const textBlock = response.content.find((block) => block.type === "text")
+              if (!textBlock || textBlock.type !== "text") {
+                throw new Error("No text content in response")
+              }
+
+              return parsePRResponse(textBlock.text.trim())
             },
             catch: (error) => {
               const isRateLimit =

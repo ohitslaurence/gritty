@@ -242,6 +242,26 @@ const commitCommand = Command.make("commit", { speed: speedOption }, (args) =>
 - **Validate after execution** - verify changes work as expected
 - **Small, focused commits** - one logical change per commit
 
+## Using Gritty (Dogfooding)
+
+Use gritty itself for git workflows in this project:
+
+```bash
+# Create/switch branches
+bun run dev -- branch feat/my-feature
+
+# Compose commits (ALWAYS use --accept since we can't interact with prompts)
+bun run dev -- compose --accept
+
+# Create PRs (ALWAYS use --accept)
+bun run dev -- pr --accept
+
+# Single commits
+bun run dev -- commit --accept
+```
+
+**IMPORTANT:** Always use `--accept` flag when running gritty commands from Claude Code, since interactive prompts (y/n/e) cannot be answered.
+
 ## Key Architectural Decisions
 
 1. **Effect for all async/fallible operations** - No raw Promises or try/catch

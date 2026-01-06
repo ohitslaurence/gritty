@@ -6,6 +6,8 @@ AI-powered Git CLI tool using Claude. Generate meaningful commit messages and in
 
 - **Smart Commit Messages** — Analyzes your diff and generates conventional commit messages
 - **Intelligent Compose** — AI analyzes all your changes and proposes logical commit groupings with a feedback loop
+- **AI-Powered PRs** — Generate PR titles and descriptions from your commits and diff
+- **Quick Branching** — Simple `gritty branch` command to create or switch branches
 - **Speed Tiers** — Choose between Haiku (fast), Sonnet (balanced), or Opus (quality)
 - **Style Detection** — Matches your repo's existing commit message style
 - **Customizable Models** — Configure different Claude models for each speed tier
@@ -19,6 +21,7 @@ AI-powered Git CLI tool using Claude. Generate meaningful commit messages and in
 
 - [Bun](https://bun.sh/) >= 1.0.0
 - An [Anthropic API key](https://console.anthropic.com/)
+- [GitHub CLI](https://cli.github.com/) (optional, for `gritty pr`)
 
 ### Quick Start
 
@@ -107,6 +110,47 @@ gritty compose --accept
 
 This is powerful for end-of-day commits or when you've been working on multiple things.
 
+### Create Pull Requests
+
+Generate AI-powered PR descriptions from your branch's commits:
+
+```bash
+# Create PR with AI-generated title and description
+gritty pr
+
+# Preview without creating
+gritty pr --dry-run
+
+# Create as draft PR
+gritty pr --draft
+
+# Specify base branch (default: main/master)
+gritty pr --base develop
+
+# Add context for better descriptions
+gritty pr --context "implements RFC-123"
+```
+
+**How it works:**
+1. Analyzes commits ahead of base branch and the diff
+2. AI generates a PR title and description with summary + test plan
+3. You review and can accept, edit in browser, or abort
+4. Automatically pushes branch if not yet pushed
+
+Requires [GitHub CLI](https://cli.github.com/) to be installed and authenticated (`gh auth login`).
+
+### Quick Branching
+
+Simple branch management without typing `git checkout -b`:
+
+```bash
+# Create or switch to a branch
+gritty branch feat/new-feature
+
+# If branch exists, switches to it
+# If branch doesn't exist, creates and switches to it
+```
+
 ### Speed tiers
 
 ```bash
@@ -177,6 +221,9 @@ src/
 │   └── commands/
 │       ├── commit.ts       # Commit command
 │       ├── compose.ts      # Compose command
+│       ├── pr.ts           # PR command
+│       ├── branch.ts       # Branch command
+│       ├── config.ts       # Config commands
 │       └── auth.ts         # Auth commands
 ├── services/
 │   ├── ai/                 # Claude API integration
@@ -212,21 +259,23 @@ src/
 - [x] Large diff handling with truncation warnings
 - [x] `--accept` flag for automation
 
-### v0.3 — Configuration (In Progress)
+### v0.3 — Configuration ✅
 - [x] `.grittyrc` project config support
 - [x] Default speed tier from config
-- [ ] `gritty config init/show` commands
-- [ ] Better error messages with suggestions
-- [ ] Improved help text with examples
+- [x] Custom model IDs per speed tier
+- [x] `gritty config init/show` commands
+- [x] Better error messages with suggestions
+- [x] Improved help text with examples
 
-### v0.4 — Testing & Quality
-- [ ] Expanded test coverage (compose, config, split)
-- [ ] TestConfigService utility
+### v0.4 — Testing & Quality ✅
+- [x] Expanded test coverage (compose, config, split)
+- [x] TestConfigService utility
 - [ ] Integration tests
 
-### v0.5 — More Commands
+### v0.5 — More Commands (In Progress)
+- [x] `gritty pr` — Generate PR descriptions
+- [x] `gritty branch` — Quick branch creation/switching
 - [ ] `gritty review` — AI code review
-- [ ] `gritty pr` — Generate PR descriptions
 - [ ] `gritty changelog` — Generate changelogs
 - [ ] `gritty explain` — Explain code changes
 

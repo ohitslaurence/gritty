@@ -5,6 +5,14 @@ import type { GenerateOptions } from "../../types/models"
 import { AIService, type AIServiceImpl } from "./service"
 
 /**
+ * Default PR description for tests.
+ */
+const DEFAULT_PR_DESCRIPTION = {
+  title: "feat: add new feature",
+  body: "## Summary\n- Add new feature\n\n## Test plan\n- [ ] Test it",
+}
+
+/**
  * Create a test AIService with configurable behavior.
  */
 export const TestAIService = {
@@ -20,6 +28,7 @@ export const TestAIService = {
           Effect.succeed([
             { title: "test: default commit", files: [], reason: "test" },
           ]),
+        generatePRDescription: () => Effect.succeed(DEFAULT_PR_DESCRIPTION),
       })
     ),
 
@@ -39,6 +48,9 @@ export const TestAIService = {
             Effect.succeed([
               { title: "test: default commit", files: [], reason: "test" },
             ])),
+        generatePRDescription:
+          impl.generatePRDescription ??
+          (() => Effect.succeed(DEFAULT_PR_DESCRIPTION)),
       })
     ),
 
@@ -57,6 +69,7 @@ export const TestAIService = {
           Effect.succeed([
             { title: "test: captured commit", files: [], reason: "test" },
           ]),
+        generatePRDescription: () => Effect.succeed(DEFAULT_PR_DESCRIPTION),
       })
     ),
 
@@ -69,6 +82,7 @@ export const TestAIService = {
       AIService.of({
         generateCommitMessage: () => Effect.fail(error),
         composeCommits: () => Effect.fail(error),
+        generatePRDescription: () => Effect.fail(error),
       })
     ),
 
@@ -83,6 +97,7 @@ export const TestAIService = {
         Effect.succeed([
           { title: "feat: add new feature", files: [], reason: "default test" },
         ]),
+      generatePRDescription: () => Effect.succeed(DEFAULT_PR_DESCRIPTION),
     })
   ),
 }

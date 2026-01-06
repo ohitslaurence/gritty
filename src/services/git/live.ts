@@ -155,5 +155,70 @@ export const GitServiceLive = Layer.succeed(
           )
         )
       ),
+
+    checkoutBranch: (name, options) =>
+      Effect.gen(function* () {
+        if (options?.create) {
+          // Create and switch
+          yield* execGit("checkout", "-b", name)
+        } else {
+          // Try to switch, create if doesn't exist
+          const exists = yield* execGit("show-ref", "--verify", `refs/heads/${name}`).pipe(
+            Effect.map(() => true),
+            Effect.catchAll(() => Effect.succeed(false))
+          )
+          if (exists) {
+            yield* execGit("checkout", name)
+          } else {
+            yield* execGit("checkout", "-b", name)
+          }
+        }
+      }),
+
+    branchExists: (name) =>
+      execGit("show-ref", "--verify", `refs/heads/${name}`).pipe(
+        Effect.map(() => true),
+        Effect.catchAll(() => Effect.succeed(false))
+      ),
+
+    getDefaultBranch: () =>
+      Effect.gen(function* () {
+        // Try main first, then master
+        const mainExists = yield* execGit("show-ref", "--verify", "refs/heads/main").pipe(
+          Effect.map(() => true),
+          Effect.catchAll(() => Effect.succeed(false))
+        )
+        if (mainExists) return BranchName("main")
+
+        const masterExists = yield* execGit("show-ref", "--verify", "refs/heads/master").pipe(
+          Effect.map(() => true),
+          Effect.catchAll(() => Effect.succeed(false))
+        )
+        if (masterExists) return BranchName("master")
+
+        // Fall back to main as default
+        return BranchName("main")
+      }),
+
+    getCommitsAhead: (base) =>
+      execGit("log", `${base}..HEAD`, "--pretty=format:%H|%s|%an|%at").pipe(
+        Effect.map(parseCommits)
+      ),
+
+    getDiffFromBranch: (base) =>
+      execGit("diff", `${base}..HEAD`).pipe(
+        Effect.map((output) => DiffContent(output))
+      ),
+
+    hasRemote: () =>
+      execGit("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}").pipe(
+        Effect.map(() => true),
+        Effect.catchAll(() => Effect.succeed(false))
+      ),
+
+    push: (options) =>
+      options?.setUpstream
+        ? execGit("push", "-u", "origin", "HEAD").pipe(Effect.asVoid)
+        : execGit("push").pipe(Effect.asVoid),
   })
 )
