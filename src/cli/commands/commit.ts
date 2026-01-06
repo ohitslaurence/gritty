@@ -34,6 +34,11 @@ const dryRunOption = Options.boolean("dry-run").pipe(
   Options.withDescription("Print message only, don't commit")
 )
 
+const acceptOption = Options.boolean("accept").pipe(
+  Options.withAlias("a"),
+  Options.withDescription("Auto-accept the generated message (skip confirmation)")
+)
+
 const stagedOnlyOption = Options.boolean("staged-only").pipe(
   Options.withDescription("Only use already-staged changes (skip auto-staging)")
 )
@@ -52,6 +57,7 @@ const commitOptions = {
   medium: mediumOption,
   slow: slowOption,
   dryRun: dryRunOption,
+  accept: acceptOption,
   stagedOnly: stagedOnlyOption,
   context: contextOption,
 }
@@ -106,7 +112,7 @@ const commitWithEditor = (message: string): Effect.Effect<void, GitError> =>
 export const commitCommand = Command.make(
   "commit",
   commitOptions,
-  ({ fast, medium, slow, dryRun, stagedOnly, context }) =>
+  ({ fast, medium, slow, dryRun, accept, stagedOnly, context }) =>
     Effect.gen(function* () {
       const git = yield* GitService
       const ai = yield* AIService
@@ -164,6 +170,13 @@ export const commitCommand = Command.make(
 
       // Dry run stops here
       if (dryRun) {
+        return
+      }
+
+      // Auto-accept if flag is set
+      if (accept) {
+        yield* git.commit(message)
+        yield* Console.log(`\n✓ Committed: ${message.split("\n")[0]}`)
         return
       }
 
