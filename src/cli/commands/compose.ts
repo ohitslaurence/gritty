@@ -4,31 +4,32 @@ import { DiffContent } from "../../types/branded"
 import { NoStagedChangesError, UserError } from "../../types/errors"
 import type { SpeedTier } from "../../types/models"
 import { AIService, type ProposedCommit } from "../../services/ai/service"
+import { ConfigService } from "../../services/config/service"
 import { GitService } from "../../services/git/service"
 import { confirmWithFeedback, promptText, confirm } from "../../core/prompt"
-import { commitWithEditor, getSpeedTier } from "../../core/git-utils"
+import { commitWithEditor } from "../../core/git-utils"
 
 /**
  * Speed tier options.
  */
 const fastOption = Options.boolean("fast").pipe(
   Options.withAlias("f"),
-  Options.withDescription("Use Haiku for speed")
+  Options.withDescription("Use Haiku for speed (~1s, good for simple changes)")
 )
 
 const slowOption = Options.boolean("slow").pipe(
   Options.withAlias("s"),
-  Options.withDescription("Use Opus for quality")
+  Options.withDescription("Use Opus for quality (best for complex refactors)")
 )
 
 const dryRunOption = Options.boolean("dry-run").pipe(
   Options.withAlias("d"),
-  Options.withDescription("Show proposed commits without executing")
+  Options.withDescription("Preview proposed commits without executing")
 )
 
 const acceptOption = Options.boolean("accept").pipe(
   Options.withAlias("a"),
-  Options.withDescription("Auto-accept all prompts (skip confirmation)")
+  Options.withDescription("Skip all confirmation prompts (for automation)")
 )
 
 const composeOptions = {
@@ -119,6 +120,7 @@ export const composeCommand = Command.make(
     Effect.gen(function* () {
       const git = yield* GitService
       const ai = yield* AIService
+      const config = yield* ConfigService
 
       // Check if we're in a git repo
       const isRepo = yield* git.isGitRepo()
@@ -128,7 +130,9 @@ export const composeCommand = Command.make(
         )
       }
 
-      const speed = getSpeedTier(fast, slow)
+      // Determine speed: CLI flags override config default
+      const defaultSpeed = yield* config.getDefaultSpeed()
+      const speed = fast ? "fast" : slow ? "slow" : defaultSpeed
 
       // Get all changed files
       const status = yield* git.getStatus()
@@ -223,8 +227,20 @@ export const composeCommand = Command.make(
       Effect.catchTags({
         NoStagedChangesError: (e) => Console.error(`\n✗ ${e.message}`),
         UserError: (e) => Console.error(`\n✗ ${e.message}`),
-        GitError: (e) => Console.error(`\n✗ Git error: ${e.message}`),
-        AIError: (e) => Console.error(`\n✗ AI error: ${e.message}`),
+        GitError: (e) =>
+          Console.error(
+            `\n✗ Git error: ${e.message}\n  Try: git status`
+          ),
+        AIError: (e) =>
+          Console.error(
+            e.retryable
+              ? `\n✗ AI error: ${e.message}\n  This may be a rate limit - try again in a moment`
+              : `\n✗ AI error: ${e.message}\n  Check your API key with: gritty auth status`
+          ),
+        ConfigError: (e) =>
+          Console.error(
+            `\n✗ Config error: ${e.message}\n  Check your .grittyrc file for syntax errors`
+          ),
       })
     )
 ).pipe(Command.withDescription("Intelligently compose changes into logical commits"))
