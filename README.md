@@ -1,17 +1,17 @@
 # gritty
 
-AI-powered Git CLI tool using Claude. Generate meaningful commit messages from your staged changes.
+AI-powered Git CLI tool using Claude. Generate meaningful commit messages and intelligently organize your changes.
 
 ## Features
 
 - **Smart Commit Messages** — Analyzes your diff and generates conventional commit messages
-- **Intelligent Compose** — Automatically splits changes into logical commits
+- **Intelligent Compose** — AI analyzes all your changes and proposes logical commit groupings with a feedback loop
 - **Speed Tiers** — Choose between Haiku (fast), Sonnet (balanced), or Opus (quality)
 - **Style Detection** — Matches your repo's existing commit message style
+- **Customizable Models** — Configure different Claude models for each speed tier
 - **Context Aware** — Add context to help the AI understand your changes
 - **Project Config** — `.grittyrc` for per-project settings
 - **Secure Auth** — API keys stored locally with proper permissions
-- **Effect-Powered** — Built with Effect for robust error handling and composability
 
 ## Installation
 
@@ -84,17 +84,28 @@ gritty commit --context "fixing the auth bug from issue #123"
 gritty commit --staged-only
 ```
 
-### Intelligent compose
+### Intelligent Compose
 
-Split your changes into logical commits:
+When you have many changes across different files, `compose` analyzes them and proposes logical commit groupings:
 
 ```bash
-# Analyze changes and propose commit groupings
+# Analyze all changes and propose commit structure
 gritty compose
 
 # Preview proposed commits without executing
 gritty compose --dry-run
+
+# Auto-accept all prompts (for automation)
+gritty compose --accept
 ```
+
+**How it works:**
+1. Analyzes all staged, unstaged, and untracked files
+2. AI proposes logical commit groupings (e.g., "feature + tests", "refactor", "docs")
+3. You review and can provide feedback to adjust groupings (`y/n/f`)
+4. For each commit, generates a message and opens your editor for review
+
+This is powerful for end-of-day commits or when you've been working on multiple things.
 
 ### Speed tiers
 
@@ -131,11 +142,18 @@ Example `.grittyrc`:
   "commit": {
     "style": "conventional",
     "model": {
-      "default": "fast"
+      "default": "fast",
+      "fast": "claude-3-5-haiku-latest",
+      "medium": "claude-sonnet-4-20250514",
+      "slow": "claude-opus-4-20250514"
     }
   }
 }
 ```
+
+**Model options:**
+- `default`: Which tier to use when no flag specified (`fast` | `medium` | `slow`)
+- `fast`, `medium`, `slow`: Custom model IDs for each tier (any Claude model ID)
 
 Config is loaded from (in order): `.grittyrc` → `.gritty.json` → `~/.gritty/config.json`
 
