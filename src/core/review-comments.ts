@@ -75,7 +75,7 @@ export const getExistingComments = (prNumber: number): Effect.Effect<readonly Ex
  * Check if a comment is similar to an existing one.
  */
 export const isDuplicateComment = (
-  newComment: { file: string; line?: number; comment: string },
+  newComment: { file: string; line?: number | undefined; comment: string },
   existing: readonly ExistingComment[]
 ): boolean => {
   for (const e of existing) {

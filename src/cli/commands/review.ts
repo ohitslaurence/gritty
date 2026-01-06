@@ -1,13 +1,30 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect, Option } from "effect"
-import { DiffContent } from "../../types/branded"
 import { AIService } from "../../services/ai/service"
+import { ReviewStateService } from "../../services/review-state/service"
 import { UserError } from "../../types/errors"
+import type { ReviewState, ChunkState, FilePreview } from "../../types/review-state"
 import { requireGhCli } from "../../core/gh-utils"
-import { listOpenPRs, getPRInfo, getPRDiff, parsePRNumber, type PRInfo } from "../../core/pr-utils"
+import {
+  listOpenPRs,
+  getPRInfo,
+  getPRFiles,
+  getPRHeadSha,
+  getRepoInfo,
+  buildFilePreviews,
+  parsePRNumber,
+  type PRInfo,
+} from "../../core/pr-utils"
 import { getExistingComments, postReview, type ExistingComment } from "../../core/review-comments"
 import { formatReview } from "../../core/review-format"
 import { getRepoContext } from "../../core/repo-context"
+import {
+  aggregateChunkReviews,
+  isStateStale,
+  getIncompleteChunks,
+  getCompletedChunks,
+  createInitialState,
+} from "../../core/chunked-review"
 
 /**
  * Optional PR argument (number or URL).
@@ -18,20 +35,6 @@ const prArg = Args.text({ name: "pr" }).pipe(
 )
 
 /**
- * Speed tier options.
- * Review defaults to Opus (slow) for thorough analysis.
- */
-const fastOption = Options.boolean("fast").pipe(
-  Options.withAlias("f"),
-  Options.withDescription("Use Haiku for speed (default: Opus)")
-)
-
-const slowOption = Options.boolean("slow").pipe(
-  Options.withAlias("s"),
-  Options.withDescription("Use Opus for quality (default)")
-)
-
-/**
  * Other options.
  */
 const postOption = Options.boolean("post").pipe(
@@ -39,11 +42,21 @@ const postOption = Options.boolean("post").pipe(
   Options.withDescription("Post review to GitHub (default: just display)")
 )
 
+const freshOption = Options.boolean("fresh").pipe(
+  Options.withDescription("Ignore existing state, start fresh review")
+)
+
+const concurrencyOption = Options.integer("concurrency").pipe(
+  Options.withAlias("c"),
+  Options.withDefault(2),
+  Options.withDescription("Number of chunks to review in parallel (default: 2)")
+)
+
 const reviewOptions = {
   pr: prArg,
-  fast: fastOption,
-  slow: slowOption,
   post: postOption,
+  fresh: freshOption,
+  concurrency: concurrencyOption,
 }
 
 /**
@@ -95,14 +108,106 @@ const selectPR = (prs: readonly PRInfo[]): Effect.Effect<PRInfo | null, never> =
   })
 
 /**
+ * Review chunks in parallel with concurrency limit.
+ */
+const reviewChunksInParallel = (
+  ai: AIService["Type"],
+  reviewState: ReviewStateService["Type"],
+  state: ReviewState,
+  incompleteChunks: readonly ChunkState[],
+  options: {
+    title: string
+    description: string
+    guidelines?: string
+    readme?: string
+    concurrency: number
+  }
+): Effect.Effect<ReviewState, import("../../types/errors").AIError | import("../../types/errors").StateError> =>
+  Effect.gen(function* () {
+    let currentState = state
+
+    // Process chunks with limited concurrency
+    const chunkEffects = incompleteChunks.map((chunkState) =>
+      Effect.gen(function* () {
+        const { group } = chunkState
+
+        // Mark as in_progress
+        currentState = yield* reviewState.updateChunk(currentState, group.id, {
+          status: "in_progress",
+          startedAt: new Date().toISOString(),
+        })
+
+        yield* Console.log(`  Reviewing: ${group.name}...`)
+
+        // Get full diffs for files in this group
+        const filesWithDiff = state.files
+          .filter((f) => group.files.includes(f.path))
+          .map((f) => ({ path: f.path, diff: f.fullDiff }))
+
+        // Review the chunk - build options object conditionally for exactOptionalPropertyTypes
+        const chunkOptions: {
+          title: string
+          description: string
+          guidelines?: string
+          readme?: string
+        } = {
+          title: options.title,
+          description: options.description,
+        }
+        if (options.guidelines) chunkOptions.guidelines = options.guidelines
+        if (options.readme) chunkOptions.readme = options.readme
+
+        const result = yield* ai.reviewChunk(
+          {
+            groupId: group.id,
+            groupName: group.name,
+            groupReasoning: group.reasoning,
+            files: filesWithDiff,
+          },
+          chunkOptions
+        )
+
+        // Mark as completed
+        currentState = yield* reviewState.updateChunk(currentState, group.id, {
+          status: "completed",
+          result,
+          completedAt: new Date().toISOString(),
+        })
+
+        yield* Console.log(`  ✓ ${group.name} (${result.comments.length} comments)`)
+
+        return result
+      }).pipe(
+        Effect.catchAll((error) =>
+          Effect.gen(function* () {
+            // Mark as failed
+            currentState = yield* reviewState.updateChunk(currentState, chunkState.group.id, {
+              status: "failed",
+              error: error instanceof Error ? error.message : String(error),
+            })
+            yield* Console.log(`  ✗ ${chunkState.group.name}: ${error instanceof Error ? error.message : String(error)}`)
+            return yield* Effect.fail(error)
+          })
+        )
+      )
+    )
+
+    // Run with concurrency limit
+    yield* Effect.all(chunkEffects, { concurrency: options.concurrency })
+
+    return currentState
+  })
+
+/**
  * The review command implementation.
  */
 export const reviewCommand = Command.make(
   "review",
   reviewOptions,
-  ({ pr, fast, slow, post }) =>
+  ({ pr, post, fresh, concurrency }) =>
     Effect.gen(function* () {
       const ai = yield* AIService
+      const reviewState = yield* ReviewStateService
 
       // Check gh CLI is installed and authenticated
       yield* requireGhCli()
@@ -139,38 +244,107 @@ export const reviewCommand = Command.make(
 
       yield* Console.log(`\nReviewing PR #${prInfo.number}: ${prInfo.title}`)
 
-      // Get PR diff
-      const diff = yield* getPRDiff(prInfo.number)
-      if (!diff.trim()) {
-        return yield* Effect.fail(
-          new UserError({ message: "PR has no diff (empty or already merged?)" })
+      // Get repo info and head SHA
+      const repoInfo = yield* getRepoInfo()
+      const headSha = yield* getPRHeadSha(prInfo.number)
+
+      // Check for existing state
+      let state: ReviewState | null = null
+      if (!fresh) {
+        state = yield* reviewState.load(repoInfo.owner, repoInfo.repo, prInfo.number).pipe(
+          Effect.catchAll(() => Effect.succeed(null))
         )
+
+        if (state && isStateStale(state, headSha)) {
+          yield* Console.log("PR has new commits since last review, starting fresh...")
+          yield* reviewState.delete(repoInfo.owner, repoInfo.repo, prInfo.number)
+          state = null
+        }
       }
 
-      // Determine speed - review defaults to slow (Opus) for better analysis
-      const speed = fast ? "fast" : slow ? "slow" : "slow"
-
-      // Fetch repo context (CLAUDE.md, README, etc.)
+      // Fetch repo context
       const repoContext = yield* getRepoContext()
       if (repoContext.guidelines) {
         yield* Console.log("Found repo guidelines")
       }
 
-      yield* Console.log(`Analyzing diff (${speed} mode)...`)
+      // Start new or resume
+      if (!state) {
+        // Fetch PR files
+        yield* Console.log("Fetching PR files...")
+        const prFiles = yield* getPRFiles(prInfo.number)
 
-      // Get AI review
-      const reviewOptions: Parameters<typeof ai.reviewPR>[1] = {
-        speed,
-        title: prInfo.title,
-        description: prInfo.body,
+        if (prFiles.length === 0) {
+          return yield* Effect.fail(
+            new UserError({ message: "PR has no changed files" })
+          )
+        }
+
+        yield* Console.log(`Found ${prFiles.length} changed file(s)`)
+
+        // Build file previews
+        yield* Console.log("Building file previews...")
+        const filePreviews = yield* buildFilePreviews(prFiles)
+
+        // Group files using AI
+        yield* Console.log("Grouping files for parallel review...")
+        const groups = yield* ai.groupFilesForReview(filePreviews, {
+          title: prInfo.title,
+          description: prInfo.body,
+        })
+
+        yield* Console.log(`Created ${groups.length} review group(s):`)
+        for (const group of groups) {
+          yield* Console.log(`  - ${group.name} (${group.files.length} files)`)
+        }
+
+        // Create and save initial state
+        state = createInitialState(repoInfo, prInfo, headSha, filePreviews as FilePreview[], groups)
+        yield* reviewState.save(state)
+      } else {
+        const incomplete = getIncompleteChunks(state)
+        const completed = getCompletedChunks(state)
+        yield* Console.log(`Resuming review: ${completed.length} completed, ${incomplete.length} remaining`)
       }
-      if (repoContext.guidelines) reviewOptions.guidelines = repoContext.guidelines
-      if (repoContext.readme) reviewOptions.readme = repoContext.readme
 
-      const review = yield* ai.reviewPR(DiffContent(diff), reviewOptions)
+      // Review incomplete chunks
+      const incompleteChunks = getIncompleteChunks(state)
+
+      if (incompleteChunks.length > 0) {
+        yield* Console.log(`\nReviewing ${incompleteChunks.length} chunk(s) with concurrency ${concurrency}...`)
+
+        const reviewOptions: {
+          title: string
+          description: string
+          guidelines?: string
+          readme?: string
+          concurrency: number
+        } = {
+          title: prInfo.title,
+          description: prInfo.body,
+          concurrency,
+        }
+        if (repoContext.guidelines) reviewOptions.guidelines = repoContext.guidelines
+        if (repoContext.readme) reviewOptions.readme = repoContext.readme
+
+        state = yield* reviewChunksInParallel(ai, reviewState, state, incompleteChunks, reviewOptions)
+      }
+
+      // Aggregate results
+      const completedResults = getCompletedChunks(state)
+
+      if (completedResults.length === 0) {
+        yield* Console.log("\nNo review results (all chunks failed?)")
+        return
+      }
+
+      const review = aggregateChunkReviews(completedResults)
 
       // Display review
       yield* Console.log(formatReview(review, prInfo.number))
+
+      // Clean up state on success
+      yield* reviewState.delete(repoInfo.owner, repoInfo.repo, prInfo.number)
 
       // Post to GitHub if requested
       if (post) {
@@ -214,6 +388,8 @@ export const reviewCommand = Command.make(
               ? `\n✗ AI error: ${e.message}\n  This may be a rate limit - try again in a moment`
               : `\n✗ AI error: ${e.message}\n  Check your API key with: gritty auth status`
           ),
+        StateError: (e) =>
+          Console.error(`\n✗ State error: ${e.message}`),
       })
     )
-).pipe(Command.withDescription("AI-powered code review for PRs"))
+).pipe(Command.withDescription("AI-powered chunked code review for PRs"))

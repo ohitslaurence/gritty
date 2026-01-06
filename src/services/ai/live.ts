@@ -3,6 +3,7 @@ import { Effect, Layer } from "effect"
 import { CommitMessage, type DiffContent } from "../../types/branded"
 import { AIError } from "../../types/errors"
 import type { GenerateOptions } from "../../types/models"
+import type { FilePreview, FileGroup, ChunkReviewResult } from "../../types/review-state"
 import { AuthService } from "../auth/service"
 import { ConfigService } from "../config/service"
 import { AIService, type ProposedCommit, type PRDescription, type PRReview } from "./service"
@@ -374,6 +375,216 @@ const parseReviewResponse = (response: string): PRReview => {
 }
 
 /**
+ * Build the system prompt for file grouping.
+ */
+const buildGroupingSystemPrompt = (): string => {
+  return `You are an expert code reviewer organizing files for a parallel review process.
+
+<task>
+Analyze the PR files and group them into logical chunks that can be reviewed independently.
+Each chunk should contain files that are related and should be reviewed together.
+</task>
+
+<grouping_principles>
+1. Group files by logical concern (e.g., all auth-related files together)
+2. Keep tests with their implementation files
+3. Keep type definitions with files that use them
+4. Configuration files can be their own group or with related code
+5. Aim for 2-5 files per group (adjust based on complexity)
+6. A single large/complex file can be its own group
+7. Prefer fewer groups over many tiny groups
+</grouping_principles>
+
+<output_format>
+Return ONLY valid JSON, no markdown or explanation:
+{
+  "groups": [
+    {
+      "name": "Authentication middleware",
+      "reasoning": "Auth implementation with tests and types",
+      "files": ["src/auth/middleware.ts", "src/auth/middleware.test.ts", "src/types/auth.ts"]
+    }
+  ]
+}
+</output_format>`
+}
+
+/**
+ * Build the user prompt for file grouping.
+ */
+const buildGroupingUserPrompt = (
+  files: readonly FilePreview[],
+  pr: { title: string; description: string }
+): string => {
+  const fileList = files
+    .map((f) => {
+      const contentSection = f.contentPreview
+        ? `<content_preview>\n${f.contentPreview}\n</content_preview>`
+        : "<content_preview>(file deleted or empty)</content_preview>"
+      const diffSection = f.diffPreview
+        ? `<diff_preview>\n${f.diffPreview}\n</diff_preview>`
+        : "<diff_preview>(no changes)</diff_preview>"
+      return `<file path="${f.path}">\n${contentSection}\n${diffSection}\n</file>`
+    })
+    .join("\n\n")
+
+  return `<pr>
+<title>${pr.title}</title>
+<description>${pr.description}</description>
+</pr>
+
+<files count="${files.length}">
+${fileList}
+</files>
+
+Group these files for parallel review.`
+}
+
+/**
+ * Parse the grouping response from AI.
+ */
+const parseGroupingResponse = (response: string): FileGroup[] => {
+  try {
+    const parsed = JSON.parse(response) as { groups: Array<{ name: string; reasoning: string; files: string[] }> }
+    // Add unique IDs to each group
+    return parsed.groups.map((g, i) => ({
+      id: `group-${i}-${Date.now()}`,
+      name: g.name,
+      reasoning: g.reasoning,
+      files: g.files,
+    }))
+  } catch {
+    // Try to extract JSON from the response if it's wrapped in markdown
+    const jsonMatch = response.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]) as { groups: Array<{ name: string; reasoning: string; files: string[] }> }
+      return parsed.groups.map((g, i) => ({
+        id: `group-${i}-${Date.now()}`,
+        name: g.name,
+        reasoning: g.reasoning,
+        files: g.files,
+      }))
+    }
+    throw new Error("Failed to parse grouping response as JSON")
+  }
+}
+
+/**
+ * Build the system prompt for chunk review.
+ * Similar to full review but with chunk context.
+ */
+const buildChunkReviewSystemPrompt = (options: { guidelines?: string; readme?: string }): string => {
+  const guidelinesSection = options.guidelines
+    ? `
+<repo_guidelines>
+The following are the repository's own guidelines. Enforce these as the source of truth for style, conventions, and patterns.
+
+${options.guidelines}
+</repo_guidelines>
+`
+    : ""
+
+  const readmeSection = options.readme
+    ? `
+<repo_readme>
+Project context from README:
+
+${options.readme}
+</repo_readme>
+`
+    : ""
+
+  return `You are a code reviewer analyzing a subset of files from a pull request.
+
+<context>
+You are reviewing ONE CHUNK of a larger PR. Other chunks are being reviewed in parallel.
+Focus only on the files in this chunk - don't worry about files not shown.
+</context>
+
+<philosophy>
+Be FACTUAL, not OPINIONATED. Your job is to identify:
+- Objective issues: bugs, logic errors, security vulnerabilities, performance problems
+- Convention violations: ONLY if the repo has documented conventions
+- Improvements: concrete, measurable benefits - not subjective preferences
+
+Do NOT impose your own style preferences.
+</philosophy>
+${guidelinesSection}${readmeSection}
+<what_to_comment_on>
+CRITICAL: bugs, security issues, data loss risks, race conditions
+SUGGESTION: performance improvements, missing error handling, edge cases
+NITPICK: convention violations (only if documented in repo_guidelines)
+PRAISE: clever solutions, good test coverage, clean edge case handling
+</what_to_comment_on>
+
+<line_number_constraint>
+CRITICAL: You can ONLY comment on lines visible in the diff.
+Use NEW file line numbers (right side). NEVER use line numbers for code not in the diff.
+</line_number_constraint>
+
+<output_format>
+Return ONLY valid JSON:
+{
+  "summary": "Brief factual assessment of this chunk (1-2 sentences)",
+  "verdict": "approve" | "request_changes" | "comment",
+  "comments": []  // Can be empty if no issues
+}
+
+Each comment should have: file, line (optional), severity, comment
+</output_format>`
+}
+
+/**
+ * Build the user prompt for chunk review.
+ */
+const buildChunkReviewUserPrompt = (
+  chunk: {
+    groupName: string
+    groupReasoning: string
+    files: readonly { path: string; diff: string }[]
+  },
+  pr: { title: string; description: string }
+): string => {
+  const filesContent = chunk.files
+    .map((f) => `<file path="${f.path}">\n${f.diff}\n</file>`)
+    .join("\n\n")
+
+  return `<pr>
+<title>${pr.title}</title>
+<description>${pr.description}</description>
+</pr>
+
+<chunk>
+<name>${chunk.groupName}</name>
+<reasoning>${chunk.groupReasoning}</reasoning>
+</chunk>
+
+<files count="${chunk.files.length}">
+${filesContent}
+</files>
+
+Review this chunk of the PR.`
+}
+
+/**
+ * Parse the chunk review response from AI.
+ */
+const parseChunkReviewResponse = (response: string, groupId: string): ChunkReviewResult => {
+  try {
+    const parsed = JSON.parse(response) as Omit<ChunkReviewResult, "groupId">
+    return { groupId, ...parsed }
+  } catch {
+    // Try to extract JSON from the response if it's wrapped in markdown
+    const jsonMatch = response.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]) as Omit<ChunkReviewResult, "groupId">
+      return { groupId, ...parsed }
+    }
+    throw new Error("Failed to parse chunk review response as JSON")
+  }
+}
+
+/**
  * Live implementation of AIService using Anthropic SDK.
  * Gets API key from AuthService (env var or stored credentials).
  * Gets model configuration from ConfigService.
@@ -674,6 +885,158 @@ export const AIServiceLive = Layer.effect(
               }
 
               return parseReviewResponse(textBlock.text.trim())
+            },
+            catch: (error) => {
+              const isRateLimit =
+                error instanceof Anthropic.RateLimitError ||
+                (error instanceof Error && error.message.includes("rate limit"))
+
+              return new AIError({
+                message: error instanceof Error ? error.message : String(error),
+                retryable: isRateLimit,
+                cause: error,
+              })
+            },
+          })
+        }),
+
+      groupFilesForReview: (files, options) =>
+        Effect.gen(function* () {
+          // Get API key from auth service
+          const apiKey = yield* auth.getApiKey().pipe(
+            Effect.mapError(
+              (e) =>
+                new AIError({
+                  message: `Auth error: ${e.message}`,
+                  retryable: false,
+                  cause: e,
+                })
+            )
+          )
+
+          if (!apiKey) {
+            return yield* Effect.fail(
+              new AIError({
+                message:
+                  "Not authenticated. Run 'gritty auth login' or set ANTHROPIC_API_KEY.",
+                retryable: false,
+                cause: undefined,
+              })
+            )
+          }
+
+          // Use fast model for grouping
+          const model = yield* config.getModel("fast").pipe(
+            Effect.mapError(
+              (e) =>
+                new AIError({
+                  message: `Config error: ${e.message}`,
+                  retryable: false,
+                  cause: e,
+                })
+            )
+          )
+
+          // Create client with the API key
+          const client = new Anthropic({ apiKey })
+
+          return yield* Effect.tryPromise({
+            try: async () => {
+              const response = await client.messages.create({
+                model,
+                max_tokens: 2048,
+                system: buildGroupingSystemPrompt(),
+                messages: [
+                  {
+                    role: "user",
+                    content: buildGroupingUserPrompt(files, options),
+                  },
+                ],
+              })
+
+              // Extract text from response
+              const textBlock = response.content.find((block) => block.type === "text")
+              if (!textBlock || textBlock.type !== "text") {
+                throw new Error("No text content in response")
+              }
+
+              return parseGroupingResponse(textBlock.text.trim())
+            },
+            catch: (error) => {
+              const isRateLimit =
+                error instanceof Anthropic.RateLimitError ||
+                (error instanceof Error && error.message.includes("rate limit"))
+
+              return new AIError({
+                message: error instanceof Error ? error.message : String(error),
+                retryable: isRateLimit,
+                cause: error,
+              })
+            },
+          })
+        }),
+
+      reviewChunk: (chunk, options) =>
+        Effect.gen(function* () {
+          // Get API key from auth service
+          const apiKey = yield* auth.getApiKey().pipe(
+            Effect.mapError(
+              (e) =>
+                new AIError({
+                  message: `Auth error: ${e.message}`,
+                  retryable: false,
+                  cause: e,
+                })
+            )
+          )
+
+          if (!apiKey) {
+            return yield* Effect.fail(
+              new AIError({
+                message:
+                  "Not authenticated. Run 'gritty auth login' or set ANTHROPIC_API_KEY.",
+                retryable: false,
+                cause: undefined,
+              })
+            )
+          }
+
+          // Use slow model for quality review
+          const model = yield* config.getModel("slow").pipe(
+            Effect.mapError(
+              (e) =>
+                new AIError({
+                  message: `Config error: ${e.message}`,
+                  retryable: false,
+                  cause: e,
+                })
+            )
+          )
+
+          // Create client with the API key
+          const client = new Anthropic({ apiKey })
+
+          return yield* Effect.tryPromise({
+            try: async () => {
+              const response = await client.messages.create({
+                model,
+                max_tokens: 4096,
+                system: buildChunkReviewSystemPrompt(options),
+                messages: [
+                  {
+                    role: "user",
+                    content: buildChunkReviewUserPrompt(chunk, options),
+                  },
+                ],
+              })
+
+              // Extract text from response
+              const textBlock = response.content.find((block) => block.type === "text")
+              if (!textBlock || textBlock.type !== "text") {
+                throw new Error("No text content in response")
+              }
+
+              return parseChunkReviewResponse(textBlock.text.trim(), chunk.groupId)
             },
             catch: (error) => {
               const isRateLimit =

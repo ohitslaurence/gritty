@@ -22,6 +22,28 @@ const DEFAULT_PR_REVIEW = {
 }
 
 /**
+ * Default file groups for tests.
+ */
+const DEFAULT_FILE_GROUPS = [
+  {
+    id: "test-group-1",
+    name: "Test files",
+    reasoning: "Test file grouping",
+    files: ["test.ts"],
+  },
+]
+
+/**
+ * Default chunk review result for tests.
+ */
+const DEFAULT_CHUNK_REVIEW = {
+  groupId: "test-group-1",
+  summary: "Chunk looks good.",
+  verdict: "approve" as const,
+  comments: [],
+}
+
+/**
  * Create a test AIService with configurable behavior.
  */
 export const TestAIService = {
@@ -39,6 +61,8 @@ export const TestAIService = {
           ]),
         generatePRDescription: () => Effect.succeed(DEFAULT_PR_DESCRIPTION),
         reviewPR: () => Effect.succeed(DEFAULT_PR_REVIEW),
+        groupFilesForReview: () => Effect.succeed(DEFAULT_FILE_GROUPS),
+        reviewChunk: () => Effect.succeed(DEFAULT_CHUNK_REVIEW),
       })
     ),
 
@@ -64,6 +88,12 @@ export const TestAIService = {
         reviewPR:
           impl.reviewPR ??
           (() => Effect.succeed(DEFAULT_PR_REVIEW)),
+        groupFilesForReview:
+          impl.groupFilesForReview ??
+          (() => Effect.succeed(DEFAULT_FILE_GROUPS)),
+        reviewChunk:
+          impl.reviewChunk ??
+          (() => Effect.succeed(DEFAULT_CHUNK_REVIEW)),
       })
     ),
 
@@ -84,6 +114,8 @@ export const TestAIService = {
           ]),
         generatePRDescription: () => Effect.succeed(DEFAULT_PR_DESCRIPTION),
         reviewPR: () => Effect.succeed(DEFAULT_PR_REVIEW),
+        groupFilesForReview: () => Effect.succeed(DEFAULT_FILE_GROUPS),
+        reviewChunk: () => Effect.succeed(DEFAULT_CHUNK_REVIEW),
       })
     ),
 
@@ -98,6 +130,8 @@ export const TestAIService = {
         composeCommits: () => Effect.fail(error),
         generatePRDescription: () => Effect.fail(error),
         reviewPR: () => Effect.fail(error),
+        groupFilesForReview: () => Effect.fail(error),
+        reviewChunk: () => Effect.fail(error),
       })
     ),
 
@@ -114,6 +148,8 @@ export const TestAIService = {
         ]),
       generatePRDescription: () => Effect.succeed(DEFAULT_PR_DESCRIPTION),
       reviewPR: () => Effect.succeed(DEFAULT_PR_REVIEW),
+      groupFilesForReview: () => Effect.succeed(DEFAULT_FILE_GROUPS),
+      reviewChunk: () => Effect.succeed(DEFAULT_CHUNK_REVIEW),
     })
   ),
 }

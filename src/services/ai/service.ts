@@ -2,6 +2,7 @@ import { Context, Effect } from "effect"
 import type { CommitMessage, DiffContent } from "../../types/branded"
 import type { AIError } from "../../types/errors"
 import type { GenerateOptions, SpeedTier } from "../../types/models"
+import type { FilePreview, FileGroup, ChunkReviewResult } from "../../types/review-state"
 
 /**
  * A proposed commit group from AI analysis.
@@ -25,7 +26,7 @@ export interface PRDescription {
  */
 export interface ReviewComment {
   readonly file: string
-  readonly line?: number
+  readonly line?: number | undefined
   readonly severity: "critical" | "suggestion" | "nitpick" | "praise"
   readonly comment: string
 }
@@ -87,6 +88,37 @@ export interface AIServiceImpl {
       readme?: string
     }
   ) => Effect.Effect<PRReview, AIError>
+
+  /**
+   * Group PR files into logical chunks for parallel review.
+   * Uses fast model (Haiku) for speed.
+   */
+  readonly groupFilesForReview: (
+    files: readonly FilePreview[],
+    options: {
+      title: string
+      description: string
+    }
+  ) => Effect.Effect<readonly FileGroup[], AIError>
+
+  /**
+   * Review a single chunk of related files.
+   * Uses slow model (Opus) for quality.
+   */
+  readonly reviewChunk: (
+    chunk: {
+      groupId: string
+      groupName: string
+      groupReasoning: string
+      files: readonly { path: string; diff: string }[]
+    },
+    options: {
+      title: string
+      description: string
+      guidelines?: string
+      readme?: string
+    }
+  ) => Effect.Effect<ChunkReviewResult, AIError>
 }
 
 /**

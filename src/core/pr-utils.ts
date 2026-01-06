@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 import { GitError } from "../types/errors"
+import type { FilePreview } from "../types/review-state"
 
 /**
  * PR info from gh CLI.
@@ -136,4 +137,176 @@ export const parsePRNumber = (input: string): number | null => {
   }
 
   return null
+}
+
+/**
+ * PR file info from gh CLI.
+ */
+export interface PRFile {
+  path: string
+  additions: number
+  deletions: number
+  patch: string
+}
+
+/**
+ * Get changed files in a PR with their diffs.
+ */
+export const getPRFiles = (prNumber: number): Effect.Effect<readonly PRFile[], GitError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const proc = Bun.spawn(
+        ["gh", "pr", "view", String(prNumber), "--json", "files"],
+        { stdout: "pipe", stderr: "pipe" }
+      )
+      const stdout = await new Response(proc.stdout).text()
+      const stderr = await new Response(proc.stderr).text()
+      await proc.exited
+
+      if (proc.exitCode !== 0) {
+        throw new Error(stderr || `Failed to get files for PR #${prNumber}`)
+      }
+
+      const data = JSON.parse(stdout) as {
+        files: Array<{
+          path: string
+          additions: number
+          deletions: number
+          patch?: string
+        }>
+      }
+
+      return data.files.map((f) => ({
+        path: f.path,
+        additions: f.additions,
+        deletions: f.deletions,
+        patch: f.patch || "",
+      }))
+    },
+    catch: (error) =>
+      new GitError({
+        operation: "pr files",
+        message: error instanceof Error ? error.message : String(error),
+        cause: error,
+      }),
+  })
+
+/**
+ * Get repo owner and name from gh CLI.
+ */
+export const getRepoInfo = (): Effect.Effect<{ owner: string; repo: string }, GitError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const proc = Bun.spawn(["gh", "repo", "view", "--json", "owner,name"], {
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const stdout = await new Response(proc.stdout).text()
+      const stderr = await new Response(proc.stderr).text()
+      await proc.exited
+
+      if (proc.exitCode !== 0) {
+        throw new Error(stderr || "Failed to get repo info")
+      }
+
+      const data = JSON.parse(stdout) as { owner: { login: string }; name: string }
+      return { owner: data.owner.login, repo: data.name }
+    },
+    catch: (error) =>
+      new GitError({
+        operation: "repo view",
+        message: error instanceof Error ? error.message : String(error),
+        cause: error,
+      }),
+  })
+
+/**
+ * Get PR head SHA.
+ */
+export const getPRHeadSha = (prNumber: number): Effect.Effect<string, GitError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const proc = Bun.spawn(
+        ["gh", "pr", "view", String(prNumber), "--json", "headRefOid", "--jq", ".headRefOid"],
+        { stdout: "pipe", stderr: "pipe" }
+      )
+      const stdout = await new Response(proc.stdout).text()
+      const stderr = await new Response(proc.stderr).text()
+      await proc.exited
+
+      if (proc.exitCode !== 0) {
+        throw new Error(stderr || `Failed to get SHA for PR #${prNumber}`)
+      }
+
+      return stdout.trim()
+    },
+    catch: (error) =>
+      new GitError({
+        operation: "pr sha",
+        message: error instanceof Error ? error.message : String(error),
+        cause: error,
+      }),
+  })
+
+/**
+ * Read first N lines of a file from local checkout.
+ * Returns empty string if file doesn't exist (e.g., deleted file).
+ */
+export const readFilePreview = (
+  filePath: string,
+  maxLines: number
+): Effect.Effect<string, GitError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const file = Bun.file(filePath)
+      if (!(await file.exists())) {
+        return ""
+      }
+
+      const content = await file.text()
+      const lines = content.split("\n").slice(0, maxLines)
+      return lines.join("\n")
+    },
+    catch: (error) =>
+      new GitError({
+        operation: "read file",
+        message: error instanceof Error ? error.message : String(error),
+        cause: error,
+      }),
+  })
+
+/**
+ * Truncate text to first N lines.
+ */
+const truncateLines = (text: string, maxLines: number): string => {
+  const lines = text.split("\n").slice(0, maxLines)
+  return lines.join("\n")
+}
+
+/**
+ * Build FilePreview objects for all changed files.
+ * Reads file content in parallel.
+ */
+export const buildFilePreviews = (
+  files: readonly PRFile[],
+  options: { contentLines?: number; diffLines?: number } = {}
+): Effect.Effect<readonly FilePreview[], GitError> => {
+  const contentLines = options.contentLines ?? 30
+  const diffLines = options.diffLines ?? 100
+
+  return Effect.all(
+    files.map((file) =>
+      Effect.gen(function* () {
+        const contentPreview = yield* readFilePreview(file.path, contentLines)
+
+        return {
+          path: file.path,
+          contentPreview,
+          diffPreview: truncateLines(file.patch, diffLines),
+          fullDiff: file.patch,
+        }
+      })
+    ),
+    { concurrency: 10 }
+  )
 }
