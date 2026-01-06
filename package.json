@@ -4,11 +4,12 @@
   "description": "AI-powered Git CLI tool using Claude",
   "type": "module",
   "bin": {
-    "gritty": "./dist/index.js"
+    "gritty": "./dist/gritty"
   },
   "scripts": {
     "dev": "bun run src/index.ts",
-    "build": "bun build src/index.ts --outdir dist --target bun",
+    "build": "bun build src/index.ts --compile --outfile dist/gritty",
+    "install:global": "mkdir -p ~/.local/bin && ln -sf $(pwd)/dist/gritty ~/.local/bin/gritty",
     "check": "bun run lint && bun run typecheck && bun test",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
