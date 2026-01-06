@@ -3,7 +3,6 @@ import { Console, Effect, Option } from "effect"
 import { unlink } from "fs/promises"
 import { DiffContent } from "../../types/branded"
 import { AIService, type PRReview } from "../../services/ai/service"
-import { ConfigService } from "../../services/config/service"
 import { UserError, GitError } from "../../types/errors"
 
 /**
@@ -16,15 +15,16 @@ const prArg = Args.text({ name: "pr" }).pipe(
 
 /**
  * Speed tier options.
+ * Review defaults to Opus (slow) for thorough analysis.
  */
 const fastOption = Options.boolean("fast").pipe(
   Options.withAlias("f"),
-  Options.withDescription("Use Haiku for speed")
+  Options.withDescription("Use Haiku for speed (default: Opus)")
 )
 
 const slowOption = Options.boolean("slow").pipe(
   Options.withAlias("s"),
-  Options.withDescription("Use Opus for quality")
+  Options.withDescription("Use Opus for quality (default)")
 )
 
 /**
@@ -605,7 +605,6 @@ export const reviewCommand = Command.make(
   ({ pr, fast, slow, post }) =>
     Effect.gen(function* () {
       const ai = yield* AIService
-      const config = yield* ConfigService
 
       // Check gh CLI
       const ghInstalled = yield* checkGhInstalled()
@@ -666,9 +665,8 @@ export const reviewCommand = Command.make(
         )
       }
 
-      // Determine speed
-      const defaultSpeed = yield* config.getDefaultSpeed()
-      const speed = fast ? "fast" : slow ? "slow" : defaultSpeed
+      // Determine speed - review defaults to slow (Opus) for better analysis
+      const speed = fast ? "fast" : slow ? "slow" : "slow"
 
       yield* Console.log(`Analyzing diff (${speed} mode)...`)
 
@@ -723,10 +721,6 @@ export const reviewCommand = Command.make(
             e.retryable
               ? `\n✗ AI error: ${e.message}\n  This may be a rate limit - try again in a moment`
               : `\n✗ AI error: ${e.message}\n  Check your API key with: gritty auth status`
-          ),
-        ConfigError: (e) =>
-          Console.error(
-            `\n✗ Config error: ${e.message}\n  Check your .grittyrc file for syntax errors`
           ),
       })
     )
