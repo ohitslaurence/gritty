@@ -64,7 +64,7 @@ export const promptKey = (
  * Prompt for yes/no confirmation.
  */
 export const confirm = (message: string): Effect.Effect<boolean, never> =>
-  promptKey(`${message} [Y/n] `, ["y", "n"]).pipe(
+  promptKey(`${message} [y/n] `, ["y", "n"]).pipe(
     Effect.map((key) => key === "y")
   )
 
@@ -74,7 +74,7 @@ export const confirm = (message: string): Effect.Effect<boolean, never> =>
 export const confirmWithEdit = (
   message: string
 ): Effect.Effect<"yes" | "no" | "edit", never> =>
-  promptKey(`${message} [Y/n/e] `, ["y", "n", "e"]).pipe(
+  promptKey(`${message} [y/n/e] `, ["y", "n", "e"]).pipe(
     Effect.map((key) => {
       if (key === "y") return "yes"
       if (key === "n") return "no"
@@ -88,7 +88,7 @@ export const confirmWithEdit = (
 export const confirmWithFeedback = (
   message: string
 ): Effect.Effect<"yes" | "no" | "feedback", never> =>
-  promptKey(`${message} [Y/n/f] `, ["y", "n", "f"]).pipe(
+  promptKey(`${message} [y/n/f] `, ["y", "n", "f"]).pipe(
     Effect.map((key) => {
       if (key === "y") return "yes"
       if (key === "n") return "no"
