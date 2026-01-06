@@ -1,18 +1,21 @@
 import { Effect } from "effect"
 
 /**
- * Files to check for repo context, in priority order.
+ * Files to check for guidelines, in priority order.
  */
-const CONTEXT_FILES = [
+const GUIDELINE_FILES = [
   "CLAUDE.md",
   "claude.md",
   ".claude/CLAUDE.md",
   "agents.md",
   "AGENTS.md",
   ".github/AGENTS.md",
-  "README.md",
-  "readme.md",
 ] as const
+
+/**
+ * Files to check for README, in priority order.
+ */
+const README_FILES = ["README.md", "readme.md"] as const
 
 /**
  * Repository context gathered from documentation files.
@@ -27,17 +30,18 @@ export interface RepoContext {
 /**
  * Try to read a file, returning null if it doesn't exist.
  */
-const tryReadFile = async (path: string): Promise<string | null> => {
-  try {
-    const file = Bun.file(path)
-    if (await file.exists()) {
-      return await file.text()
+const tryReadFile = (path: string): Effect.Effect<string | null, never> =>
+  Effect.promise(async () => {
+    try {
+      const file = Bun.file(path)
+      if (await file.exists()) {
+        return await file.text()
+      }
+    } catch {
+      // File doesn't exist or can't be read
     }
-  } catch {
-    // File doesn't exist or can't be read
-  }
-  return null
-}
+    return null
+  })
 
 /**
  * Truncate content to a max length, preserving complete lines.
@@ -47,40 +51,52 @@ const truncateContent = (content: string, maxLength: number): string => {
 
   const truncated = content.slice(0, maxLength)
   const lastNewline = truncated.lastIndexOf("\n")
-  return (lastNewline > 0 ? truncated.slice(0, lastNewline) : truncated) + "\n[...truncated]"
+  const result = lastNewline > 0 ? truncated.slice(0, lastNewline) : truncated
+
+  return `${result}\n\n--- Content truncated for context limit ---`
 }
 
 /**
+ * Read multiple files in parallel and return the first one that exists (by priority order).
+ */
+const findFirstFile = (
+  cwd: string,
+  files: readonly string[],
+  maxLength: number
+): Effect.Effect<string | null, never> =>
+  Effect.gen(function* () {
+    // Read all files in parallel
+    const results = yield* Effect.all(
+      files.map((file) => tryReadFile(`${cwd}/${file}`)),
+      { concurrency: "unbounded" }
+    )
+
+    // Return first match (maintains priority order since we map in order)
+    for (const content of results) {
+      if (content) {
+        return truncateContent(content, maxLength)
+      }
+    }
+
+    return null
+  })
+
+/**
  * Fetch repository context files for review.
- * Looks for CLAUDE.md, agents.md, and README.md in common locations.
+ * Reads files in parallel for performance, returns first match by priority.
  */
 export const getRepoContext = (): Effect.Effect<RepoContext, never> =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     const cwd = process.cwd()
 
-    // Find guidelines (CLAUDE.md or agents.md) - stop at first match
-    let guidelines: string | null = null
-    for (const file of CONTEXT_FILES) {
-      if (file.toLowerCase().includes("readme")) continue // Handle README separately
-      // oxlint-disable-next-line no-await-in-loop
-      const content = await tryReadFile(`${cwd}/${file}`)
-      if (content) {
-        guidelines = truncateContent(content, 8000)
-        break
-      }
-    }
-
-    // Find README - stop at first match
-    let readme: string | null = null
-    for (const file of CONTEXT_FILES) {
-      if (!file.toLowerCase().includes("readme")) continue
-      // oxlint-disable-next-line no-await-in-loop
-      const content = await tryReadFile(`${cwd}/${file}`)
-      if (content) {
-        readme = truncateContent(content, 4000)
-        break
-      }
-    }
+    // Read guidelines and readme in parallel
+    const [guidelines, readme] = yield* Effect.all(
+      [
+        findFirstFile(cwd, GUIDELINE_FILES, 8000),
+        findFirstFile(cwd, README_FILES, 4000),
+      ],
+      { concurrency: 2 }
+    )
 
     return { guidelines, readme }
   })
