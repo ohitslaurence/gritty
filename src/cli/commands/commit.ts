@@ -1,12 +1,12 @@
 import { Command, Options } from "@effect/cli"
 import { Console, Effect, Option } from "effect"
 import { DiffContent } from "../../types/branded"
-import { GitError, NoStagedChangesError, UserError } from "../../types/errors"
-import type { SpeedTier } from "../../types/models"
+import { NoStagedChangesError, UserError } from "../../types/errors"
 import { AIService } from "../../services/ai/service"
 import { GitService } from "../../services/git/service"
 import { confirmWithEdit } from "../../core/prompt"
 import { isDiffTooLarge } from "../../core/split"
+import { commitWithEditor, getSpeedTier } from "../../core/git-utils"
 
 /**
  * Speed tier options - mutually exclusive flags.
@@ -14,11 +14,6 @@ import { isDiffTooLarge } from "../../core/split"
 const fastOption = Options.boolean("fast").pipe(
   Options.withAlias("f"),
   Options.withDescription("Use Haiku for speed (< 1.5s)")
-)
-
-const mediumOption = Options.boolean("medium").pipe(
-  Options.withAlias("m"),
-  Options.withDescription("Use Sonnet for balance (default)")
 )
 
 const slowOption = Options.boolean("slow").pipe(
@@ -54,21 +49,11 @@ const contextOption = Options.text("context").pipe(
  */
 const commitOptions = {
   fast: fastOption,
-  medium: mediumOption,
   slow: slowOption,
   dryRun: dryRunOption,
   accept: acceptOption,
   stagedOnly: stagedOnlyOption,
   context: contextOption,
-}
-
-/**
- * Determine speed tier from flags.
- */
-const getSpeedTier = (fast: boolean, _medium: boolean, slow: boolean): SpeedTier => {
-  if (fast) return "fast"
-  if (slow) return "slow"
-  return "medium"
 }
 
 /**
@@ -83,36 +68,12 @@ ${separator}`
 }
 
 /**
- * Execute git commit with editor for review.
- */
-const commitWithEditor = (message: string): Effect.Effect<void, GitError> =>
-  Effect.tryPromise({
-    try: async () => {
-      const proc = Bun.spawn(["git", "commit", "-e", "-m", message], {
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-      })
-      const exitCode = await proc.exited
-      if (exitCode !== 0) {
-        throw new Error(`Commit aborted or failed`)
-      }
-    },
-    catch: (error) =>
-      new GitError({
-        operation: "commit",
-        message: error instanceof Error ? error.message : String(error),
-        cause: error,
-      }),
-  })
-
-/**
  * The commit command implementation.
  */
 export const commitCommand = Command.make(
   "commit",
   commitOptions,
-  ({ fast, medium, slow, dryRun, accept, stagedOnly, context }) =>
+  ({ fast, slow, dryRun, accept, stagedOnly, context }) =>
     Effect.gen(function* () {
       const git = yield* GitService
       const ai = yield* AIService
@@ -125,7 +86,7 @@ export const commitCommand = Command.make(
         )
       }
 
-      const speed = getSpeedTier(fast, medium, slow)
+      const speed = getSpeedTier(fast, slow)
       const contextValue = Option.getOrUndefined(context)
 
       // Stage all changes unless --staged-only
@@ -154,7 +115,11 @@ export const commitCommand = Command.make(
       )
 
       // Truncate diff if too large
-      const safeDiff = isDiffTooLarge(diff)
+      const diffTruncated = isDiffTooLarge(diff)
+      if (diffTruncated) {
+        yield* Console.log("⚠ Large diff detected - truncating for analysis")
+      }
+      const safeDiff = diffTruncated
         ? diff.slice(0, 80000) + "\n\n[... diff truncated ...]"
         : diff
 
@@ -188,10 +153,15 @@ export const commitCommand = Command.make(
           yield* git.commit(message)
           yield* Console.log(`\n✓ Committed: ${message.split("\n")[0]}`)
           break
-        case "edit":
-          yield* commitWithEditor(message)
-          yield* Console.log(`\n✓ Committed`)
+        case "edit": {
+          const committed = yield* commitWithEditor(message)
+          if (committed) {
+            yield* Console.log(`\n✓ Committed`)
+          } else {
+            yield* Console.log("\nAborted.")
+          }
           break
+        }
         case "no":
           yield* Console.log("\nAborted.")
           break

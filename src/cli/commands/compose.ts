@@ -1,11 +1,12 @@
 import { Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { DiffContent } from "../../types/branded"
-import { GitError, NoStagedChangesError, UserError } from "../../types/errors"
+import { NoStagedChangesError, UserError } from "../../types/errors"
 import type { SpeedTier } from "../../types/models"
 import { AIService, type ProposedCommit } from "../../services/ai/service"
 import { GitService } from "../../services/git/service"
 import { confirmWithFeedback, promptText, confirm } from "../../core/prompt"
+import { commitWithEditor, getSpeedTier } from "../../core/git-utils"
 
 /**
  * Speed tier options.
@@ -25,19 +26,16 @@ const dryRunOption = Options.boolean("dry-run").pipe(
   Options.withDescription("Show proposed commits without executing")
 )
 
+const acceptOption = Options.boolean("accept").pipe(
+  Options.withAlias("a"),
+  Options.withDescription("Auto-accept all prompts (skip confirmation)")
+)
+
 const composeOptions = {
   fast: fastOption,
   slow: slowOption,
   dryRun: dryRunOption,
-}
-
-/**
- * Determine speed tier from flags.
- */
-const getSpeedTier = (fast: boolean, slow: boolean): SpeedTier => {
-  if (fast) return "fast"
-  if (slow) return "slow"
-  return "medium"
+  accept: acceptOption,
 }
 
 /**
@@ -59,30 +57,6 @@ const formatProposedCommits = (commits: readonly ProposedCommit[]): string => {
 }
 
 /**
- * Execute git commit with editor for review.
- */
-const commitWithEditor = (message: string): Effect.Effect<void, GitError> =>
-  Effect.tryPromise({
-    try: async () => {
-      const proc = Bun.spawn(["git", "commit", "-e", "-m", message], {
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-      })
-      const exitCode = await proc.exited
-      if (exitCode !== 0) {
-        throw new Error(`Commit aborted or failed`)
-      }
-    },
-    catch: (error) =>
-      new GitError({
-        operation: "commit",
-        message: error instanceof Error ? error.message : String(error),
-        cause: error,
-      }),
-  })
-
-/**
  * Execute a single proposed commit.
  */
 const executeCommit = (
@@ -91,6 +65,7 @@ const executeCommit = (
   commit: ProposedCommit,
   options: {
     speed: SpeedTier
+    accept: boolean
     recentCommits: readonly { hash: string; message: string; author: string; date: Date }[]
   }
 ) =>
@@ -119,12 +94,16 @@ const executeCommit = (
 
     yield* Console.log(`\n  Message: ${message.split("\n")[0]}`)
 
-    // Confirm this commit
-    const shouldCommit = yield* confirm("  Commit this?")
+    // Auto-accept or confirm
+    const shouldCommit = options.accept ? true : yield* confirm("  Commit this?")
 
     if (shouldCommit) {
-      yield* commitWithEditor(message)
-      yield* Console.log(`  ✓ Committed`)
+      const committed = yield* commitWithEditor(message)
+      if (committed) {
+        yield* Console.log(`  ✓ Committed`)
+      } else {
+        yield* Console.log(`  Aborted`)
+      }
     } else {
       yield* Console.log(`  Skipped`)
     }
@@ -136,7 +115,7 @@ const executeCommit = (
 export const composeCommand = Command.make(
   "compose",
   composeOptions,
-  ({ fast, slow, dryRun }) =>
+  ({ fast, slow, dryRun, accept }) =>
     Effect.gen(function* () {
       const git = yield* GitService
       const ai = yield* AIService
@@ -204,6 +183,11 @@ export const composeCommand = Command.make(
           return
         }
 
+        // Auto-accept skips confirmation
+        if (accept) {
+          break
+        }
+
         // Ask for confirmation
         const response = yield* confirmWithFeedback("Proceed with these commits?")
 
@@ -231,7 +215,7 @@ export const composeCommand = Command.make(
       )
 
       for (const commit of proposedCommits) {
-        yield* executeCommit(git, ai, commit, { speed, recentCommits })
+        yield* executeCommit(git, ai, commit, { speed, accept, recentCommits })
       }
 
       yield* Console.log(`\n✓ Compose complete`)
