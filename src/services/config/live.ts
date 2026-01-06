@@ -73,6 +73,11 @@ const getEnvKeyForProvider = (provider: ProviderName): string => {
       return "ANTHROPIC_API_KEY"
     case "openai":
       return "OPENAI_API_KEY"
+    default: {
+      // Exhaustive check - TypeScript will error if new providers added without handling
+      const _exhaustive: never = provider
+      return `${_exhaustive}_API_KEY`
+    }
   }
 }
 

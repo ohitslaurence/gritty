@@ -125,14 +125,14 @@ const loginCommand = Command.make("login", {}, () =>
   }).pipe(
     Effect.catchTag("ConfigError", (e) => Console.error(`\n✗ ${e.message}`))
   )
-).pipe(Command.withDescription("Authenticate with Anthropic API"))
+).pipe(Command.withDescription("Store Anthropic API credentials"))
 
 /**
  * Provider info for status display.
  */
 const PROVIDERS = [
-  { name: "Anthropic", envVar: "ANTHROPIC_API_KEY", prefix: "sk-ant-" },
-  { name: "OpenAI", envVar: "OPENAI_API_KEY", prefix: "sk-" },
+  { name: "Anthropic", envVar: "ANTHROPIC_API_KEY" },
+  { name: "OpenAI", envVar: "OPENAI_API_KEY" },
 ] as const
 
 /**
