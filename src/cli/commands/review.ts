@@ -276,32 +276,49 @@ const isDuplicateComment = (
 }
 
 /**
+ * Get PR metadata (SHA and author) for inline comments.
+ * Returns null if fetch fails.
+ */
+const getPRMetadata = async (
+  prNumber: number
+): Promise<{ sha: string; isOwnPR: boolean } | null> => {
+  const proc = Bun.spawn(
+    ["gh", "pr", "view", String(prNumber), "--json", "headRefOid,author", "--jq", ".headRefOid + \" \" + .author.login"],
+    { stdout: "pipe", stderr: "pipe" }
+  )
+  const output = (await new Response(proc.stdout).text()).trim()
+  await proc.exited
+
+  if (proc.exitCode !== 0 || !output) return null
+
+  const [sha, prAuthor] = output.split(" ")
+  if (!sha) return null
+
+  // Check if current user is the PR author
+  const whoamiProc = Bun.spawn(["gh", "api", "user", "--jq", ".login"], { stdout: "pipe", stderr: "pipe" })
+  const currentUser = (await new Response(whoamiProc.stdout).text()).trim()
+  await whoamiProc.exited
+
+  return { sha, isOwnPR: currentUser === prAuthor }
+}
+
+/**
  * Post a single inline comment. Returns true if successful.
  */
 const postInlineComment = async (
   prNumber: number,
+  sha: string,
   comment: { path: string; line: number; body: string }
 ): Promise<boolean> => {
   const payload = {
     body: comment.body,
-    commit_id: "", // Will be filled by getting latest commit
+    commit_id: sha,
     path: comment.path,
     line: comment.line,
     side: "RIGHT", // Comment on the new version
   }
 
-  // First get the latest commit SHA for the PR
-  const shaProc = Bun.spawn(
-    ["gh", "pr", "view", String(prNumber), "--json", "headRefOid", "--jq", ".headRefOid"],
-    { stdout: "pipe", stderr: "pipe" }
-  )
-  const sha = (await new Response(shaProc.stdout).text()).trim()
-  await shaProc.exited
-  if (!sha) return false
-
-  payload.commit_id = sha
-
-  const tmpFile = `/tmp/gritty-comment-${Date.now()}.json`
+  const tmpFile = `/tmp/gritty-comment-${Date.now()}-${Math.random().toString(36).slice(2)}.json`
   await Bun.write(tmpFile, JSON.stringify(payload))
 
   try {
@@ -331,12 +348,23 @@ const postReview = (
 ): Effect.Effect<{ posted: number; inlinePosted: number; inlineFailed: number; skipped: number }, GitError> =>
   Effect.tryPromise({
     try: async () => {
-      const event =
+      // Get PR metadata upfront (SHA for inline comments, isOwnPR for verdict)
+      const metadata = await getPRMetadata(prNumber)
+      if (!metadata) {
+        throw new Error("Failed to fetch PR metadata (SHA/author)")
+      }
+
+      // Determine event - can't request changes on own PR, so use COMMENT instead
+      let event =
         review.verdict === "approve"
           ? "APPROVE"
           : review.verdict === "request_changes"
             ? "REQUEST_CHANGES"
             : "COMMENT"
+
+      if (metadata.isOwnPR && event === "REQUEST_CHANGES") {
+        event = "COMMENT" // Can't request changes on own PR
+      }
 
       // Filter out duplicate comments
       const newComments = review.comments.filter(c => !isDuplicateComment(c, existingComments))
@@ -355,7 +383,7 @@ const postReview = (
         const line = comment.line ?? 0
 
         // eslint-disable-next-line no-await-in-loop -- intentional: post sequentially to track individual success/failure
-        const success = line > 0 ? await postInlineComment(prNumber, {
+        const success = line > 0 ? await postInlineComment(prNumber, metadata.sha, {
           path: comment.file,
           line,
           body: commentBody,
@@ -419,21 +447,7 @@ const postReview = (
       await proc.exited
 
       if (proc.exitCode !== 0) {
-        // Can't request changes on your own PR - fallback to comment
-        if (stderr.includes("your own pull request") && event !== "COMMENT") {
-          const fallbackProc = Bun.spawn(
-            ["gh", "pr", "review", String(prNumber), "--comment", "--body", body],
-            { stdout: "pipe", stderr: "pipe" }
-          )
-          const fallbackStderr = await new Response(fallbackProc.stderr).text()
-          await fallbackProc.exited
-
-          if (fallbackProc.exitCode !== 0) {
-            throw new Error(fallbackStderr || "Failed to post review")
-          }
-        } else {
-          throw new Error(stderr || "Failed to post review")
-        }
+        throw new Error(stderr || "Failed to post review")
       }
 
       return { posted: newComments.length, inlinePosted, inlineFailed, skipped }

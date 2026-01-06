@@ -82,7 +82,10 @@ else
 fi
 
 # Verify symlink works
-if ! "$INSTALL_DIR/gritty" --version &> /dev/null; then
+if [[ ! -x "$INSTALL_DIR/gritty" ]]; then
+    echo -e "${YELLOW}Warning: Symlink created but not executable${NC}"
+    echo "Try: chmod +x $BINARY_PATH"
+elif ! "$INSTALL_DIR/gritty" --version &> /dev/null; then
     echo -e "${YELLOW}Warning: Symlink created but gritty doesn't run${NC}"
     echo "Check that Bun is installed and in your PATH"
 fi
@@ -91,17 +94,19 @@ fi
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo -e "${YELLOW}Warning: $INSTALL_DIR is not in your PATH${NC}"
     echo ""
-    # Detect shell config file
+    # Detect shell config file using basename for robustness
+    SHELL_NAME="$(basename "$SHELL")"
     SHELL_CONFIG=""
-    if [[ -n "$ZSH_VERSION" ]] || [[ "$SHELL" == *"zsh"* ]]; then
-        SHELL_CONFIG="~/.zshrc"
-    elif [[ -n "$BASH_VERSION" ]] || [[ "$SHELL" == *"bash"* ]]; then
-        SHELL_CONFIG="~/.bashrc"
-    fi
+    case "$SHELL_NAME" in
+        zsh)  SHELL_CONFIG="$HOME/.zshrc" ;;
+        bash) SHELL_CONFIG="$HOME/.bashrc" ;;
+        fish) SHELL_CONFIG="$HOME/.config/fish/config.fish" ;;
+    esac
 
     if [[ -n "$SHELL_CONFIG" ]]; then
-        echo "Run this command to fix:"
-        echo -e "  ${GREEN}echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> $SHELL_CONFIG && source $SHELL_CONFIG${NC}"
+        echo "Run this command to add to your PATH:"
+        # Use $HOME expansion and touch to ensure file exists
+        echo -e "  ${GREEN}touch $SHELL_CONFIG && echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> $SHELL_CONFIG && source $SHELL_CONFIG${NC}"
     else
         echo "Add this to your shell config:"
         echo -e "  ${GREEN}export PATH=\"$INSTALL_DIR:\$PATH\"${NC}"
