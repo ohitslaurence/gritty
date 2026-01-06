@@ -1,0 +1,69 @@
+import { Effect, Layer } from "effect"
+import { CommitMessage, type DiffContent } from "../../types/branded"
+import type { AIError } from "../../types/errors"
+import type { GenerateOptions } from "../../types/models"
+import { AIService, type AIServiceImpl } from "./service"
+
+/**
+ * Create a test AIService with configurable behavior.
+ */
+export const TestAIService = {
+  /**
+   * Create a test layer with a fixed response.
+   */
+  withResponse: (response: string): Layer.Layer<AIService> =>
+    Layer.succeed(
+      AIService,
+      AIService.of({
+        generateCommitMessage: () => Effect.succeed(CommitMessage(response)),
+      })
+    ),
+
+  /**
+   * Create a test layer with a custom implementation.
+   */
+  make: (impl: Partial<AIServiceImpl>): Layer.Layer<AIService> =>
+    Layer.succeed(
+      AIService,
+      AIService.of({
+        generateCommitMessage:
+          impl.generateCommitMessage ??
+          (() => Effect.succeed(CommitMessage("test: default commit message"))),
+      })
+    ),
+
+  /**
+   * Create a test layer that captures the prompt for inspection.
+   */
+  withCapture: (
+    callback: (diff: DiffContent, options: GenerateOptions) => string
+  ): Layer.Layer<AIService> =>
+    Layer.succeed(
+      AIService,
+      AIService.of({
+        generateCommitMessage: (diff, options) =>
+          Effect.succeed(CommitMessage(callback(diff, options))),
+      })
+    ),
+
+  /**
+   * Create a test layer that fails with an error.
+   */
+  withError: (error: AIError): Layer.Layer<AIService> =>
+    Layer.succeed(
+      AIService,
+      AIService.of({
+        generateCommitMessage: () => Effect.fail(error),
+      })
+    ),
+
+  /**
+   * Default test layer with a generic commit message.
+   */
+  default: Layer.succeed(
+    AIService,
+    AIService.of({
+      generateCommitMessage: () => Effect.succeed(CommitMessage("feat: add new feature")),
+    })
+  ),
+}

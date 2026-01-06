@@ -1,0 +1,117 @@
+import { Effect, Layer } from "effect"
+import { BranchName, DiffContent } from "../../types/branded"
+import { GitError } from "../../types/errors"
+import type { Commit, GitStatus } from "../../types/models"
+import { GitService } from "./service"
+
+/**
+ * Execute a git command and return stdout.
+ */
+const execGit = (
+  ...args: readonly string[]
+): Effect.Effect<string, GitError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const proc = Bun.spawn(["git", ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const stdout = await new Response(proc.stdout).text()
+      const stderr = await new Response(proc.stderr).text()
+      const exitCode = await proc.exited
+
+      if (exitCode !== 0) {
+        throw new Error(stderr || `git ${args[0]} failed with exit code ${exitCode}`)
+      }
+      return stdout.trim()
+    },
+    catch: (error) =>
+      new GitError({
+        operation: args[0] ?? "unknown",
+        message: error instanceof Error ? error.message : String(error),
+        cause: error,
+      }),
+  })
+
+/**
+ * Parse git log output into Commit objects.
+ */
+const parseCommits = (output: string): readonly Commit[] => {
+  if (!output.trim()) return []
+
+  return output.split("\n").map((line) => {
+    // Format: hash|message|author|timestamp
+    const [hash, message, author, timestamp] = line.split("|")
+    return {
+      hash: hash ?? "",
+      message: message ?? "",
+      author: author ?? "",
+      date: new Date(parseInt(timestamp ?? "0", 10) * 1000),
+    }
+  })
+}
+
+/**
+ * Parse git status output into GitStatus object.
+ */
+const parseStatus = (output: string): GitStatus => {
+  const staged: string[] = []
+  const unstaged: string[] = []
+  const untracked: string[] = []
+
+  for (const line of output.split("\n")) {
+    if (!line.trim()) continue
+
+    const indexStatus = line[0]
+    const workTreeStatus = line[1]
+    const filename = line.slice(3)
+
+    if (indexStatus === "?") {
+      untracked.push(filename)
+    } else {
+      if (indexStatus && indexStatus !== " ") {
+        staged.push(filename)
+      }
+      if (workTreeStatus && workTreeStatus !== " ") {
+        unstaged.push(filename)
+      }
+    }
+  }
+
+  return { staged, unstaged, untracked }
+}
+
+/**
+ * Live implementation of GitService.
+ */
+export const GitServiceLive = Layer.succeed(
+  GitService,
+  GitService.of({
+    getStagedDiff: () =>
+      execGit("diff", "--staged").pipe(Effect.map((output) => DiffContent(output))),
+
+    getRecentCommits: (count) =>
+      execGit(
+        "log",
+        `-${count}`,
+        "--pretty=format:%H|%s|%an|%at"
+      ).pipe(Effect.map(parseCommits)),
+
+    commit: (message) => execGit("commit", "-m", message).pipe(Effect.asVoid),
+
+    getStatus: () => execGit("status", "--porcelain").pipe(Effect.map(parseStatus)),
+
+    stageAll: () => execGit("add", "-A").pipe(Effect.asVoid),
+
+    getBranchName: () =>
+      execGit("rev-parse", "--abbrev-ref", "HEAD").pipe(
+        Effect.map((name) => BranchName(name))
+      ),
+
+    isGitRepo: () =>
+      execGit("rev-parse", "--git-dir").pipe(
+        Effect.map(() => true),
+        Effect.catchAll(() => Effect.succeed(false))
+      ),
+  })
+)

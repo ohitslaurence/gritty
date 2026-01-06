@@ -1,0 +1,41 @@
+{
+  "name": "gritty-cli",
+  "version": "0.1.0",
+  "description": "AI-powered Git CLI tool using Claude",
+  "type": "module",
+  "bin": {
+    "gritty": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "check": "bun run lint && bun run typecheck && bun test",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "test:coverage": "bun test --coverage",
+    "eval": "bun run evals/runners/eval-runner.ts",
+    "eval:report": "bun run evals/runners/report-generator.ts",
+    "precommit": "bun run check"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@effect/cli": "^0.73.0",
+    "@effect/platform": "^0.94.1",
+    "@effect/platform-bun": "^0.87.0",
+    "effect": "^3.19.14"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "oxlint": "^0.16.1",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "license": "MIT"
+}
