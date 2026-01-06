@@ -176,15 +176,15 @@ Generate a clear, professional PR title and description from the commits and dif
 
 <guidelines>
 - Title: Clear summary of what this PR does, max 72 chars
-- Summary: 1-3 bullet points describing the key changes
-- Test plan: Practical testing steps (optional if obvious)
+- Body: Concise bullet points describing what changed and why
+- No test plans, no checklists - just describe the changes
 </guidelines>
 
 <output_format>
 Return ONLY valid JSON, no markdown or explanation:
 {
   "title": "Add user authentication with JWT",
-  "body": "## Summary\\n- Implement JWT token validation\\n- Add refresh token rotation\\n\\n## Test plan\\n- [ ] Verify login flow works\\n- [ ] Check token expiry handling"
+  "body": "- Implement JWT token validation\\n- Add refresh token rotation\\n- Handle token expiry with automatic refresh"
 }
 </output_format>`
 }
