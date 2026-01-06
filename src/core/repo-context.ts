@@ -53,7 +53,7 @@ const truncateContent = (content: string, maxLength: number): string => {
   const lastNewline = truncated.lastIndexOf("\n")
   const result = lastNewline > 0 ? truncated.slice(0, lastNewline) : truncated
 
-  return `${result}\n\n--- Content truncated for context limit ---`
+  return `${result}\n\n--- Content truncated (${content.length} → ${result.length} chars) ---`
 }
 
 /**
@@ -90,13 +90,10 @@ export const getRepoContext = (): Effect.Effect<RepoContext, never> =>
     const cwd = process.cwd()
 
     // Read guidelines and readme in parallel
-    const [guidelines, readme] = yield* Effect.all(
-      [
-        findFirstFile(cwd, GUIDELINE_FILES, 8000),
-        findFirstFile(cwd, README_FILES, 4000),
-      ],
-      { concurrency: 2 }
-    )
+    const [guidelines, readme] = yield* Effect.all([
+      findFirstFile(cwd, GUIDELINE_FILES, 8000),
+      findFirstFile(cwd, README_FILES, 4000),
+    ])
 
     return { guidelines, readme }
   })
