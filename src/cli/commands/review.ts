@@ -1,5 +1,6 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect, Option } from "effect"
+import { unlink } from "fs/promises"
 import { DiffContent } from "../../types/branded"
 import { AIService, type PRReview } from "../../services/ai/service"
 import { ConfigService } from "../../services/config/service"
@@ -312,9 +313,9 @@ const postInlineComment = async (
     return proc.exitCode === 0
   } finally {
     try {
-      await Bun.file(tmpFile).exists() && await Bun.write(tmpFile, "")
+      await unlink(tmpFile)
     } catch {
-      // Ignore
+      // Ignore cleanup errors
     }
   }
 }
