@@ -1,4 +1,4 @@
-import { Args, Command, Options } from "@effect/cli"
+import { Command, Options } from "@effect/cli"
 import { Console, Effect, Option } from "effect"
 import { AIService } from "../../services/ai/service"
 import { ConfigService } from "../../services/config/service"
@@ -66,11 +66,12 @@ const filterExcludedFiles = (
 }
 
 /**
- * Optional PR argument (number or URL).
+ * PR option (number or URL).
  */
-const prArg = Args.text({ name: "pr" }).pipe(
-  Args.withDescription("PR number or URL (optional - will list open PRs if not provided)"),
-  Args.optional
+const prOption = Options.text("pr").pipe(
+  Options.withAlias("r"),
+  Options.withDescription("PR number or URL (optional - will list open PRs if not provided)"),
+  Options.optional
 )
 
 /**
@@ -92,7 +93,7 @@ const concurrencyOption = Options.integer("concurrency").pipe(
 )
 
 const reviewOptions = {
-  pr: prArg,
+  pr: prOption,
   post: postOption,
   fresh: freshOption,
   concurrency: concurrencyOption,
