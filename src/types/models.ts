@@ -44,6 +44,7 @@ export interface GenerateOptions {
   readonly speed: SpeedTier
   readonly context?: string
   readonly style?: CommitStyle
+  readonly recentCommits?: readonly Commit[]
 }
 
 /**

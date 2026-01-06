@@ -134,11 +134,18 @@ export const commitCommand = Command.make(
       const speed = getSpeedTier(fast, medium, slow)
       yield* Console.log(`Analyzing staged changes (using ${speed} mode)...`)
 
+      // Fetch recent commits for style detection
+      const recentCommits = yield* git.getRecentCommits(10).pipe(
+        Effect.catchAll(() => Effect.succeed([] as const))
+      )
+
       // Generate commit message
       const contextValue = Option.getOrUndefined(context)
       const message = yield* ai.generateCommitMessage(
         DiffContent(diff),
-        contextValue ? { speed, context: contextValue } : { speed }
+        contextValue
+          ? { speed, context: contextValue, recentCommits }
+          : { speed, recentCommits }
       )
 
       // Display the message

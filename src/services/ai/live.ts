@@ -7,6 +7,27 @@ import { AuthService } from "../auth/service"
 import { AIService } from "./service"
 
 /**
+ * Format recent commits as examples for the prompt.
+ */
+const formatRecentCommits = (commits: GenerateOptions["recentCommits"]): string => {
+  if (!commits || commits.length === 0) {
+    return ""
+  }
+
+  const examples = commits
+    .slice(0, 10) // Max 10 examples
+    .map((c) => c.message)
+    .join("\n")
+
+  return `
+Here are recent commits from this repository - match their style and tone:
+<recent_commits>
+${examples}
+</recent_commits>
+`
+}
+
+/**
  * Build the system prompt for commit message generation.
  */
 const buildSystemPrompt = (options: GenerateOptions): string => {
@@ -18,8 +39,10 @@ Available scopes from repo history: ${options.style.scopes.join(", ")}`
         ? "Use gitmoji format with an appropriate emoji at the start."
         : "Use a clear, professional commit message format."
 
-  return `You are an expert developer writing a git commit message. Analyze the diff and generate a clear, concise commit message.
+  const recentCommitsSection = formatRecentCommits(options.recentCommits)
 
+  return `You are an expert developer writing a git commit message. Analyze the diff and generate a clear, concise commit message.
+${recentCommitsSection}
 ${styleGuidance}
 
 Guidelines:
@@ -27,6 +50,7 @@ Guidelines:
 2. Include body if change is complex (blank line after subject, wrapped at 72 chars)
 3. Note any breaking changes with "BREAKING CHANGE:" prefix
 4. Focus on WHY, not just WHAT changed
+5. Match the style and format of the recent commits shown above
 
 Output ONLY the commit message, no explanation or markdown.`
 }
