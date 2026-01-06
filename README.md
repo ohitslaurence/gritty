@@ -1,323 +1,247 @@
 # gritty
 
-AI-powered Git CLI tool using Claude. Generate meaningful commit messages and intelligently organize your changes.
+A fast, AI-powered Git CLI that helps you write better commits, PRs, and code reviews.
+
+Built with [Bun](https://bun.sh) and [Effect](https://effect.website) for speed and reliability.
 
 ## Features
 
-- **Smart Commit Messages** — Analyzes your diff and generates conventional commit messages
-- **Intelligent Compose** — AI analyzes all your changes and proposes logical commit groupings with a feedback loop
-- **AI-Powered PRs** — Generate PR titles and descriptions from your commits and diff
-- **Quick Branching** — Simple `gritty branch` command to create or switch branches
-- **Speed Tiers** — Choose between Haiku (fast), Sonnet (balanced), or Opus (quality)
-- **Style Detection** — Matches your repo's existing commit message style
-- **Customizable Models** — Configure different Claude models for each speed tier
-- **Context Aware** — Add context to help the AI understand your changes
-- **Project Config** — `.grittyrc` for per-project settings
-- **Secure Auth** — API keys stored locally with proper permissions
+| Command | Description |
+|---------|-------------|
+| `gritty commit` | Generate meaningful commit messages from your diff |
+| `gritty compose` | Intelligently split messy changes into logical commits |
+| `gritty pr` | Generate PR titles and descriptions |
+| `gritty review` | AI-powered code review with inline comments |
+| `gritty branch` | Quick branch creation and switching |
+
+**Additional capabilities:**
+- **Multi-provider** — Supports Anthropic (Claude) and OpenAI models
+- **Speed tiers** — Fast (Haiku), Medium (Sonnet), Slow (Opus)
+- **Context aware** — Reads CLAUDE.md, README, and repo history for better results
+- **Chunked review** — Large PRs are split into logical groups for thorough analysis
+- **Resumable** — Review state persists if interrupted
 
 ## Installation
 
-### Prerequisites
-
-- [Bun](https://bun.sh/) >= 1.0.0
-- An [Anthropic API key](https://console.anthropic.com/)
-- [GitHub CLI](https://cli.github.com/) (optional, for `gritty pr`)
-
-### Quick Start
+**Prerequisites:**
+- [Bun](https://bun.sh) >= 1.0
+- [GitHub CLI](https://cli.github.com) (for `pr` and `review` commands)
 
 ```bash
-# Clone the repo
+# Clone and install
 git clone https://github.com/ohitslaurence/gritty.git
 cd gritty
-
-# Run the install script (installs to ~/.local/bin)
 ./install.sh
 
-# Or install to /usr/local/bin (requires sudo)
-./install.sh --global
-
-# Authenticate with Anthropic
+# Authenticate
 gritty auth login
 ```
 
-The install script will:
-1. Install dependencies
-2. Build the binary
-3. Create a symlink in your PATH
-4. Warn you if the install directory isn't in your PATH
+The install script builds the binary and symlinks it to `~/.local/bin`. Use `./install.sh --global` to install to `/usr/local/bin` instead.
 
-### Manual Installation
+## Quick Start
 
 ```bash
-bun install
-bun run build
-
-# Symlink to your preferred location
-ln -sf "$(pwd)/dist/gritty" ~/.local/bin/gritty
-# or
-sudo ln -sf "$(pwd)/dist/gritty" /usr/local/bin/gritty
-```
-
-### Development Mode
-
-Run without building:
-
-```bash
-bun run dev commit --dry-run
-```
-
-## Usage
-
-### Generate a commit message
-
-```bash
-# Generate and commit (interactive y/n/e prompt)
+# Stage some changes, then generate a commit
+git add .
 gritty commit
 
-# Auto-accept the generated message
-gritty commit --accept
-
-# Preview without committing
-gritty commit --dry-run
-
-# Add context for better messages
-gritty commit --context "fixing the auth bug from issue #123"
-
-# Only use already-staged changes (skip auto-staging)
-gritty commit --staged-only
-```
-
-### Intelligent Compose
-
-When you have many changes across different files, `compose` analyzes them and proposes logical commit groupings:
-
-```bash
-# Analyze all changes and propose commit structure
+# Or let gritty organize messy changes into logical commits
 gritty compose
 
-# Preview proposed commits without executing
-gritty compose --dry-run
-
-# Auto-accept all prompts (for automation)
-gritty compose --accept
-```
-
-**How it works:**
-1. Analyzes all staged, unstaged, and untracked files
-2. AI proposes logical commit groupings (e.g., "feature + tests", "refactor", "docs")
-3. You review and can provide feedback to adjust groupings (`y/n/f`)
-4. For each commit, generates a message and opens your editor for review
-
-This is powerful for end-of-day commits or when you've been working on multiple things.
-
-### Create Pull Requests
-
-Generate AI-powered PR descriptions from your branch's commits:
-
-```bash
-# Create PR with AI-generated title and description
+# Create a PR with AI-generated description
 gritty pr
 
-# Preview without creating
-gritty pr --dry-run
+# Review someone else's PR
+gritty review --pr 123
+```
 
-# Create as draft PR
-gritty pr --draft
+## Commands
 
-# Specify base branch (default: main/master)
-gritty pr --base develop
+### `gritty commit`
 
-# Add context for better descriptions
-gritty pr --context "implements RFC-123"
+Generate a commit message from your staged diff.
+
+```bash
+gritty commit                  # Interactive prompt (y/n/e)
+gritty commit --accept         # Auto-accept generated message
+gritty commit --dry-run        # Preview without committing
+gritty commit --context "..."  # Add context for better messages
+gritty commit --fast           # Use faster model (Haiku)
+gritty commit --slow           # Use slower model (Opus)
+```
+
+### `gritty compose`
+
+Analyze all your changes and propose logical commit groupings. Perfect for end-of-day commits or when you've been working on multiple things.
+
+```bash
+gritty compose                 # Interactive grouping workflow
+gritty compose --accept        # Auto-accept all prompts
+gritty compose --dry-run       # Preview without committing
+```
+
+**Workflow:**
+1. Analyzes staged, unstaged, and untracked files
+2. AI proposes logical groupings (e.g., "feature + tests", "refactor", "docs")
+3. Review and provide feedback to adjust (`y/n/f`)
+4. Each commit opens your editor for final review
+
+### `gritty pr`
+
+Generate a PR with AI-powered title and description.
+
+```bash
+gritty pr                      # Create PR interactively
+gritty pr --accept             # Auto-accept generated content
+gritty pr --draft              # Create as draft PR
+gritty pr --base develop       # Target branch (default: main)
+gritty pr --context "..."      # Add context for description
+```
+
+Requires GitHub CLI (`gh auth login`).
+
+### `gritty review`
+
+AI-powered code review for pull requests.
+
+```bash
+gritty review                  # List open PRs and select one
+gritty review --pr 123         # Review specific PR
+gritty review -r 123 --post    # Review and post to GitHub
+gritty review -r 123 --fresh   # Ignore cached state, start fresh
+gritty review -r 123 -c 4      # Review with 4 parallel workers
 ```
 
 **How it works:**
-1. Analyzes commits ahead of base branch and the diff
-2. AI generates a PR title and description with summary + test plan
-3. You review and can accept, edit in browser, or abort
-4. Automatically pushes branch if not yet pushed
+1. Fetches PR diff and groups files by logical relationship
+2. Reviews each chunk in parallel for speed
+3. Aggregates results into a verdict (approve/request changes/comment)
+4. Optionally posts review with inline comments to GitHub
 
-Requires [GitHub CLI](https://cli.github.com/) to be installed and authenticated (`gh auth login`).
+Requires GitHub CLI (`gh auth login`).
 
-### Review Pull Requests
+### `gritty branch`
 
-AI-powered code review for any PR:
-
-```bash
-# Review a specific PR by number
-gritty review 123
-
-# Review a PR by URL
-gritty review https://github.com/owner/repo/pull/123
-
-# List open PRs and select one to review
-gritty review
-
-# Post the review to GitHub (default: just display)
-gritty review 123 --post
-```
-
-**How it works:**
-1. Fetches PR diff from GitHub
-2. AI analyzes code for bugs, suggestions, and improvements
-3. Provides verdict (approve/request changes/comment)
-4. Optionally posts review to GitHub
-
-Requires [GitHub CLI](https://cli.github.com/) to be installed and authenticated.
-
-### Quick Branching
-
-Simple branch management without typing `git checkout -b`:
+Quick branch creation and switching.
 
 ```bash
-# Create or switch to a branch
-gritty branch feat/new-feature
-
-# If branch exists, switches to it
-# If branch doesn't exist, creates and switches to it
+gritty branch feat/new-thing   # Create and switch (or just switch if exists)
 ```
 
-### Speed tiers
+### `gritty auth`
+
+Manage API credentials.
 
 ```bash
-gritty commit --fast    # Haiku - quick, good for simple changes
-gritty commit           # Sonnet - balanced (default)
-gritty commit --slow    # Opus - highest quality, complex changes
+gritty auth login              # Save API key
+gritty auth status             # Check auth status
+gritty auth logout             # Remove credentials
 ```
 
-### Authentication
+Credentials are stored in `~/.config/gritty/auth.json`. Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) take precedence.
+
+### `gritty config`
+
+Manage configuration.
 
 ```bash
-gritty auth login   # Save API key to ~/.config/gritty/auth.json
-gritty auth status  # Check authentication status
-gritty auth logout  # Remove stored credentials
+gritty config init             # Create .grittyrc with defaults
+gritty config show             # Display current config
 ```
 
-You can also set `ANTHROPIC_API_KEY` environment variable (takes precedence).
+## Configuration
 
-### Configuration
-
-Create a `.grittyrc` file in your project root:
-
-```bash
-gritty config init   # Create .grittyrc with defaults
-gritty config show   # Display current configuration
-```
-
-Example `.grittyrc`:
+Create a `.grittyrc` in your project root:
 
 ```json
 {
   "version": 1,
+  "model": "anthropic/claude-sonnet-4-20250514",
+  "fastModel": "anthropic/claude-3-5-haiku-latest",
+  "slowModel": "anthropic/claude-opus-4-20250514",
   "commit": {
     "style": "conventional",
     "model": {
-      "default": "fast",
-      "fast": "claude-3-5-haiku-latest",
-      "medium": "claude-sonnet-4-20250514",
-      "slow": "claude-opus-4-20250514"
+      "default": "medium"
     }
   }
 }
 ```
 
-**Model options:**
-- `default`: Which tier to use when no flag specified (`fast` | `medium` | `slow`)
-- `fast`, `medium`, `slow`: Custom model IDs for each tier (any Claude model ID)
+### Model Format
 
-Config is loaded from (in order): `.grittyrc` → `.gritty.json` → `~/.gritty/config.json`
+Models use `provider/model-id` format:
+
+```
+anthropic/claude-sonnet-4-20250514
+anthropic/claude-3-5-haiku-latest
+openai/gpt-4o
+openai/gpt-4-turbo
+```
+
+### Config Priority
+
+1. `.grittyrc` (project root)
+2. `.gritty.json` (project root)
+3. `~/.gritty/config.json` (home directory)
+
+### Provider Configuration
+
+Configure custom base URLs or API keys per provider:
+
+```json
+{
+  "version": 1,
+  "model": "openai/gpt-4o",
+  "provider": {
+    "openai": {
+      "apiKey": "{env:OPENAI_API_KEY}",
+      "baseURL": "https://api.openai.com/v1"
+    }
+  }
+}
+```
+
+The `{env:VAR_NAME}` syntax pulls values from environment variables.
+
+### Review Exclusions
+
+Exclude generated files from code review:
+
+```json
+{
+  "version": 1,
+  "review": {
+    "exclude": [
+      "**/*.generated.ts",
+      "**/dist/**"
+    ]
+  }
+}
+```
+
+Default exclusions: `**/generated/**`, `**/*.generated.*`, `**/*.gen.*`, `**/codegen/**`, `**/__generated__/**`
 
 ## Development
 
 ```bash
-bun run dev          # Run CLI in development
-bun run check        # Lint + typecheck + test
-bun test             # Run tests
-bun run build        # Build for distribution
+bun install              # Install dependencies
+bun run dev              # Run CLI in development
+bun run check            # Lint + typecheck + tests
+bun test                 # Run tests only
+bun run build            # Build for distribution
 ```
 
-## Architecture
-
-Built with [Effect](https://effect.website/) for type-safe, composable error handling:
+### Project Structure
 
 ```
 src/
-├── cli/
-│   ├── app.ts              # CLI entry point
-│   └── commands/
-│       ├── commit.ts       # Commit command
-│       ├── compose.ts      # Compose command
-│       ├── pr.ts           # PR command
-│       ├── review.ts       # Review command
-│       ├── branch.ts       # Branch command
-│       ├── config.ts       # Config commands
-│       └── auth.ts         # Auth commands
-├── services/
-│   ├── ai/                 # Claude API integration
-│   ├── auth/               # Credential management
-│   ├── config/             # Configuration loading (.grittyrc)
-│   ├── git/                # Git operations
-│   └── state/              # State management
-├── types/
-│   ├── branded.ts          # Branded types (DiffContent, CommitMessage)
-│   ├── errors.ts           # Typed errors
-│   └── models.ts           # Domain models
-└── core/
-    ├── git-utils.ts        # Shared git utilities
-    ├── prompt.ts           # Interactive prompts
-    └── split.ts            # Diff splitting utilities
+├── cli/commands/        # Command implementations
+├── services/            # Core services (ai, auth, config, git, provider)
+├── core/                # Shared utilities
+└── types/               # Type definitions and errors
 ```
-
-## Roadmap
-
-### v0.1 — Foundation ✅
-- [x] Project setup (Bun, TypeScript, Effect)
-- [x] Git service (diff, status, commit)
-- [x] AI service with Claude integration
-- [x] `gritty commit` command with speed tiers
-- [x] Auth flow (login/logout/status)
-- [x] Local credential storage
-
-### v0.2 — Polish ✅
-- [x] Interactive prompt confirmation (y/n/e)
-- [x] Edit message before commit (opens editor)
-- [x] Commit style detection from repo history
-- [x] `gritty compose` — intelligent commit splitting
-- [x] Large diff handling with truncation warnings
-- [x] `--accept` flag for automation
-
-### v0.3 — Configuration ✅
-- [x] `.grittyrc` project config support
-- [x] Default speed tier from config
-- [x] Custom model IDs per speed tier
-- [x] `gritty config init/show` commands
-- [x] Better error messages with suggestions
-- [x] Improved help text with examples
-
-### v0.4 — Testing & Quality ✅
-- [x] Expanded test coverage (compose, config, split)
-- [x] TestConfigService utility
-- [ ] Integration tests
-
-### v0.5 — More Commands (In Progress)
-- [x] `gritty pr` — Generate PR descriptions
-- [x] `gritty branch` — Quick branch creation/switching
-- [x] `gritty review` — AI code review
-- [ ] `gritty changelog` — Generate changelogs
-- [ ] `gritty explain` — Explain code changes
-
-### v0.6 — Distribution
-- [ ] npm package publishing
-- [ ] Homebrew formula
-- [ ] Shell completions (bash, zsh, fish)
-- [ ] Global install support
-
-### Future Ideas
-- [ ] Multi-provider support (OpenAI, local models)
-- [ ] Git hooks integration
-- [ ] Team sharing of prompts/config
-- [ ] Usage analytics and cost tracking
-- [ ] VS Code extension
 
 ## License
 
