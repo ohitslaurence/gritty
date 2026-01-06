@@ -1,6 +1,7 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect, Option } from "effect"
 import { AIService } from "../../services/ai/service"
+import { ConfigService } from "../../services/config/service"
 import { ReviewStateService } from "../../services/review-state/service"
 import { UserError } from "../../types/errors"
 import type { ReviewState, ChunkState, FilePreview } from "../../types/review-state"
@@ -14,6 +15,7 @@ import {
   buildFilePreviews,
   parsePRNumber,
   type PRInfo,
+  type PRFile,
 } from "../../core/pr-utils"
 import { getExistingComments, postReview, type ExistingComment } from "../../core/review-comments"
 import { formatReview } from "../../core/review-format"
@@ -25,6 +27,43 @@ import {
   getCompletedChunks,
   createInitialState,
 } from "../../core/chunked-review"
+
+/**
+ * Convert a glob pattern to a regex for matching file paths.
+ * Supports: ** (any path), * (any segment), ? (single char)
+ */
+const globToRegex = (pattern: string): RegExp => {
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&") // Escape regex special chars
+    .replace(/\*\*/g, "{{GLOBSTAR}}") // Placeholder for **
+    .replace(/\*/g, "[^/]*") // * matches anything except /
+    .replace(/\?/g, ".") // ? matches single char
+    .replace(/{{GLOBSTAR}}/g, ".*") // ** matches anything including /
+
+  return new RegExp(`^${escaped}$`)
+}
+
+/**
+ * Check if a file path matches any exclusion pattern.
+ */
+const isExcluded = (filePath: string, patterns: readonly string[]): boolean => {
+  for (const pattern of patterns) {
+    if (globToRegex(pattern).test(filePath)) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Filter out excluded files based on config patterns.
+ */
+const filterExcludedFiles = (
+  files: readonly PRFile[],
+  exclusions: readonly string[]
+): readonly PRFile[] => {
+  return files.filter((f) => !isExcluded(f.path, exclusions))
+}
 
 /**
  * Optional PR argument (number or URL).
@@ -208,6 +247,7 @@ export const reviewCommand = Command.make(
     Effect.gen(function* () {
       const ai = yield* AIService
       const reviewState = yield* ReviewStateService
+      const config = yield* ConfigService
 
       // Check gh CLI is installed and authenticated
       yield* requireGhCli()
@@ -272,15 +312,29 @@ export const reviewCommand = Command.make(
       if (!state) {
         // Fetch PR files
         yield* Console.log("Fetching PR files...")
-        const prFiles = yield* getPRFiles(prInfo.number)
+        const allPrFiles = yield* getPRFiles(prInfo.number)
 
-        if (prFiles.length === 0) {
+        if (allPrFiles.length === 0) {
           return yield* Effect.fail(
             new UserError({ message: "PR has no changed files" })
           )
         }
 
-        yield* Console.log(`Found ${prFiles.length} changed file(s)`)
+        // Filter out excluded files (generated files, etc.)
+        const exclusions = yield* config.getReviewExclusions()
+        const prFiles = filterExcludedFiles(allPrFiles, exclusions)
+        const excludedCount = allPrFiles.length - prFiles.length
+
+        if (excludedCount > 0) {
+          yield* Console.log(`Found ${allPrFiles.length} changed file(s), excluding ${excludedCount} generated/excluded`)
+        } else {
+          yield* Console.log(`Found ${prFiles.length} changed file(s)`)
+        }
+
+        if (prFiles.length === 0) {
+          yield* Console.log("All files are excluded from review")
+          return
+        }
 
         // Build file previews
         yield* Console.log("Building file previews...")
@@ -390,6 +444,8 @@ export const reviewCommand = Command.make(
           ),
         StateError: (e) =>
           Console.error(`\n✗ State error: ${e.message}`),
+        ConfigError: (e) =>
+          Console.error(`\n✗ Config error: ${e.message}`),
       })
     )
 ).pipe(Command.withDescription("AI-powered chunked code review for PRs"))

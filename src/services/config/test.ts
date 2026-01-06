@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect"
 import { MODEL_IDS } from "../../types/models"
-import { ConfigService, type ConfigServiceImpl, type GrittyConfig } from "./service"
+import { ConfigService, DEFAULT_REVIEW_EXCLUSIONS, type ConfigServiceImpl, type GrittyConfig } from "./service"
 
 /**
  * Default test configuration.
@@ -29,6 +29,7 @@ export const TestConfigService = {
         load: impl.load ?? (() => Effect.succeed(DEFAULT_TEST_CONFIG)),
         getModel: impl.getModel ?? ((speed) => Effect.succeed(MODEL_IDS[speed])),
         getDefaultSpeed: impl.getDefaultSpeed ?? (() => Effect.succeed("medium")),
+        getReviewExclusions: impl.getReviewExclusions ?? (() => Effect.succeed(DEFAULT_REVIEW_EXCLUSIONS)),
       })
     ),
 
@@ -67,6 +68,7 @@ export const TestConfigService = {
       load: () => Effect.succeed(DEFAULT_TEST_CONFIG),
       getModel: (speed) => Effect.succeed(MODEL_IDS[speed]),
       getDefaultSpeed: () => Effect.succeed("medium"),
+      getReviewExclusions: () => Effect.succeed(DEFAULT_REVIEW_EXCLUSIONS),
     })
   ),
 }

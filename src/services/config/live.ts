@@ -1,7 +1,7 @@
 import { Effect, Layer, Schema } from "effect"
 import { ConfigError } from "../../types/errors"
 import { MODEL_IDS, type SpeedTier } from "../../types/models"
-import { ConfigService, GrittyConfigSchema, type GrittyConfig } from "./service"
+import { ConfigService, DEFAULT_REVIEW_EXCLUSIONS, GrittyConfigSchema, type GrittyConfig } from "./service"
 
 /**
  * Default configuration when no .gritty.json is found.
@@ -110,6 +110,14 @@ const makeConfigService = (): ConfigService["Type"] => {
       Effect.gen(function* () {
         const config = yield* load()
         return config.commit?.model?.default ?? "medium"
+      }),
+
+    getReviewExclusions: () =>
+      Effect.gen(function* () {
+        const config = yield* load()
+        const customExclusions = config.review?.exclude ?? []
+        // Merge custom exclusions with defaults, removing duplicates
+        return [...new Set([...DEFAULT_REVIEW_EXCLUSIONS, ...customExclusions])]
       }),
   }
 }

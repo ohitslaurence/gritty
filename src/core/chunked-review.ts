@@ -49,6 +49,18 @@ export const aggregateChunkReviews = (
 }
 
 /**
+ * Clean up a chunk summary by removing "This chunk..." prefix.
+ */
+const cleanSummary = (summary: string): string => {
+  // Remove common prefixes like "This chunk...", "This section..."
+  return summary
+    .replace(/^This chunk\s+/i, "")
+    .replace(/^This section\s+/i, "")
+    .replace(/^The chunk\s+/i, "")
+    .replace(/^The section\s+/i, "")
+}
+
+/**
  * Synthesize a summary from chunk summaries.
  */
 const synthesizeSummary = (
@@ -56,9 +68,12 @@ const synthesizeSummary = (
   verdict: PRReview["verdict"],
   commentCount: number
 ): string => {
+  // Clean all summaries first
+  const cleaned = summaries.map(cleanSummary)
+
   // For small PRs with 1-2 chunks, just join summaries
-  if (summaries.length <= 2) {
-    return summaries.join(" ")
+  if (cleaned.length <= 2) {
+    return cleaned.join(" ")
   }
 
   // For larger PRs, create an overview
@@ -69,9 +84,9 @@ const synthesizeSummary = (
         ? "Changes requested"
         : "Comments provided"
 
-  const header = `**${verdictText}** - Reviewed ${summaries.length} sections with ${commentCount} comment(s).\n\n`
+  const header = `**${verdictText}** - Reviewed ${cleaned.length} sections with ${commentCount} comment(s).\n\n`
 
-  return header + summaries.map((s, i) => `- **Section ${i + 1}**: ${s}`).join("\n")
+  return header + cleaned.map((s, i) => `- **Section ${i + 1}**: ${s}`).join("\n")
 }
 
 /**

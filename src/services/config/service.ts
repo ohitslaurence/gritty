@@ -24,9 +24,27 @@ export const GrittyConfigSchema = Schema.Struct({
       ),
     })
   ),
+  review: Schema.optional(
+    Schema.Struct({
+      // Glob patterns to exclude from review (e.g., ["**/generated/**", "**/*.gen.ts"])
+      exclude: Schema.optional(Schema.Array(Schema.String)),
+    })
+  ),
 })
 
 export type GrittyConfig = typeof GrittyConfigSchema.Type
+
+/**
+ * Default exclusion patterns for review.
+ * Excludes common generated file patterns.
+ */
+export const DEFAULT_REVIEW_EXCLUSIONS = [
+  "**/generated/**",
+  "**/*.generated.*",
+  "**/*.gen.*",
+  "**/codegen/**",
+  "**/__generated__/**",
+]
 
 /**
  * Service interface for configuration management.
@@ -47,6 +65,12 @@ export interface ConfigServiceImpl {
    * Get the default speed tier from config.
    */
   readonly getDefaultSpeed: () => Effect.Effect<SpeedTier, ConfigError>
+
+  /**
+   * Get review exclusion patterns.
+   * Returns configured patterns merged with defaults.
+   */
+  readonly getReviewExclusions: () => Effect.Effect<readonly string[], ConfigError>
 }
 
 /**
