@@ -252,9 +252,28 @@ Review the PR diff and provide actionable feedback. Focus on:
 - Well-written code worth calling out (praise)
 </task>
 
+<critical_constraint>
+IMPORTANT: You can ONLY comment on lines that appear in the diff.
+
+The diff shows hunks like:
+@@ -10,5 +10,8 @@
+ unchanged line (context)
++added line        <- you CAN comment on this (line 11 in new file)
++another added     <- you CAN comment on this (line 12 in new file)
+ more context      <- you CAN comment on this (it's visible in diff)
+
+Line numbers in your comments MUST be lines visible in the diff. The line number is the NEW file line number (right side, after the +).
+
+If you see an issue elsewhere in the file that isn't in the diff, either:
+1. Don't comment on it (it's not part of this PR)
+2. Attach the comment to the nearest related line IN the diff and explain the broader context
+
+NEVER use line numbers for code not shown in the diff - these comments will fail to post.
+</critical_constraint>
+
 <guidelines>
 - Be constructive and specific - explain WHY something is an issue
-- Reference specific files and line numbers when possible
+- Only comment on lines visible in the diff (see constraint above)
 - Don't nitpick formatting if there's a formatter configured
 - Acknowledge good patterns, not just problems
 - Be concise but thorough
@@ -274,6 +293,8 @@ Return ONLY valid JSON, no markdown or explanation:
     }
   ]
 }
+
+For the "line" field: Use the NEW file line number (right side of diff). Only use line numbers for lines actually shown in the diff hunks.
 </output_format>
 
 <verdict_guidelines>

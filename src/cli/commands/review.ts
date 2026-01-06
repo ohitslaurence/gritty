@@ -4,7 +4,6 @@ import { DiffContent } from "../../types/branded"
 import { AIService, type PRReview } from "../../services/ai/service"
 import { ConfigService } from "../../services/config/service"
 import { UserError, GitError } from "../../types/errors"
-import { confirm } from "../../core/prompt"
 
 /**
  * Optional PR argument (number or URL).
@@ -276,13 +275,59 @@ const isDuplicateComment = (
 }
 
 /**
+ * Post a single inline comment. Returns true if successful.
+ */
+const postInlineComment = async (
+  prNumber: number,
+  comment: { path: string; line: number; body: string }
+): Promise<boolean> => {
+  const payload = {
+    body: comment.body,
+    commit_id: "", // Will be filled by getting latest commit
+    path: comment.path,
+    line: comment.line,
+    side: "RIGHT", // Comment on the new version
+  }
+
+  // First get the latest commit SHA for the PR
+  const shaProc = Bun.spawn(
+    ["gh", "pr", "view", String(prNumber), "--json", "headRefOid", "--jq", ".headRefOid"],
+    { stdout: "pipe", stderr: "pipe" }
+  )
+  const sha = (await new Response(shaProc.stdout).text()).trim()
+  await shaProc.exited
+  if (!sha) return false
+
+  payload.commit_id = sha
+
+  const tmpFile = `/tmp/gritty-comment-${Date.now()}.json`
+  await Bun.write(tmpFile, JSON.stringify(payload))
+
+  try {
+    const proc = Bun.spawn(
+      ["gh", "api", "--method", "POST", `repos/{owner}/{repo}/pulls/${prNumber}/comments`, "--input", tmpFile],
+      { stdout: "pipe", stderr: "pipe" }
+    )
+    await proc.exited
+    return proc.exitCode === 0
+  } finally {
+    try {
+      await Bun.file(tmpFile).exists() && await Bun.write(tmpFile, "")
+    } catch {
+      // Ignore
+    }
+  }
+}
+
+/**
  * Post review to GitHub with inline comments.
+ * Strategy: Post inline comments one-by-one, then post the summary review.
  */
 const postReview = (
   prNumber: number,
   review: PRReview,
   existingComments: readonly ExistingComment[]
-): Effect.Effect<{ posted: number; skipped: number }, GitError> =>
+): Effect.Effect<{ posted: number; inlinePosted: number; inlineFailed: number; skipped: number }, GitError> =>
   Effect.tryPromise({
     try: async () => {
       const event =
@@ -296,11 +341,36 @@ const postReview = (
       const newComments = review.comments.filter(c => !isDuplicateComment(c, existingComments))
       const skipped = review.comments.length - newComments.length
 
-      // Build review body
+      // Separate comments with and without line numbers
+      const inlineComments = newComments.filter(c => c.line)
+      const bodyComments = newComments.filter(c => !c.line)
+
+      // Post inline comments one-by-one (sequential to avoid rate limits)
+      const inlineResults: { comment: typeof inlineComments[0]; success: boolean }[] = []
+
+      for (const comment of inlineComments) {
+        const severity = comment.severity === "critical" ? "🚨" : comment.severity === "suggestion" ? "💡" : comment.severity === "nitpick" ? "📝" : "✨"
+        const commentBody = `${severity} **${comment.severity.toUpperCase()}**: ${comment.comment}`
+        const line = comment.line ?? 0
+
+        // eslint-disable-next-line no-await-in-loop -- intentional: post sequentially to track individual success/failure
+        const success = line > 0 ? await postInlineComment(prNumber, {
+          path: comment.file,
+          line,
+          body: commentBody,
+        }) : false
+
+        inlineResults.push({ comment, success })
+      }
+
+      const inlinePosted = inlineResults.filter(r => r.success).length
+      const inlineFailed = inlineResults.filter(r => !r.success).length
+      const failedComments = inlineResults.filter(r => !r.success).map(r => r.comment)
+
+      // Build review body with summary
       let body = review.summary
 
-      // Comments without line numbers go in the body
-      const bodyComments = newComments.filter(c => !c.line)
+      // Add comments that don't have line numbers
       if (bodyComments.length > 0) {
         body += "\n\n---\n\n"
         for (const comment of bodyComments) {
@@ -316,46 +386,56 @@ const postReview = (
         }
       }
 
-      // Comments with line numbers become inline comments via API
-      const inlineComments = newComments.filter(c => c.line)
+      // Add failed inline comments to body
+      if (failedComments.length > 0) {
+        body += "\n\n---\n\n**Additional comments** (couldn't post inline):\n\n"
+        for (const comment of failedComments) {
+          const severity =
+            comment.severity === "critical"
+              ? "🚨"
+              : comment.severity === "suggestion"
+                ? "💡"
+                : comment.severity === "nitpick"
+                  ? "📝"
+                  : "✨"
+          body += `${severity} **${comment.file}:${comment.line}**\n${comment.comment}\n\n`
+        }
+      }
 
-      if (inlineComments.length > 0) {
-        // Post the main review first
-        const proc = Bun.spawn(
-          ["gh", "api", "--method", "POST", `repos/{owner}/{repo}/pulls/${prNumber}/reviews`, "-f", `event=${event}`, "-f", `body=${body}`],
-          { stdout: "pipe", stderr: "pipe" }
-        )
+      // Post the main review (summary + verdict)
+      const eventFlag =
+        event === "APPROVE"
+          ? "--approve"
+          : event === "REQUEST_CHANGES"
+            ? "--request-changes"
+            : "--comment"
 
-        // Add each inline comment
-        for (const c of inlineComments) {
-          const severity = c.severity === "critical" ? "🚨" : c.severity === "suggestion" ? "💡" : c.severity === "nitpick" ? "📝" : "✨"
-          const commentProc = Bun.spawn(
-            ["gh", "api", "--method", "POST", `repos/{owner}/{repo}/pulls/${prNumber}/comments`,
-             "-f", `body=${severity} ${c.comment}`,
-             "-f", `path=${c.file}`,
-             "-f", `line=${c.line}`,
-             "-f", "side=RIGHT"],
+      const proc = Bun.spawn(
+        ["gh", "pr", "review", String(prNumber), eventFlag, "--body", body],
+        { stdout: "pipe", stderr: "pipe" }
+      )
+      const stderr = await new Response(proc.stderr).text()
+      await proc.exited
+
+      if (proc.exitCode !== 0) {
+        // Can't request changes on your own PR - fallback to comment
+        if (stderr.includes("your own pull request") && event !== "COMMENT") {
+          const fallbackProc = Bun.spawn(
+            ["gh", "pr", "review", String(prNumber), "--comment", "--body", body],
             { stdout: "pipe", stderr: "pipe" }
           )
-          await commentProc.exited
-        }
+          const fallbackStderr = await new Response(fallbackProc.stderr).text()
+          await fallbackProc.exited
 
-        await proc.exited
-      } else {
-        // No inline comments, just post regular review
-        const proc = Bun.spawn(
-          ["gh", "pr", "review", String(prNumber), "--event", event, "--body", body],
-          { stdout: "pipe", stderr: "pipe" }
-        )
-        const stderr = await new Response(proc.stderr).text()
-        await proc.exited
-
-        if (proc.exitCode !== 0) {
+          if (fallbackProc.exitCode !== 0) {
+            throw new Error(fallbackStderr || "Failed to post review")
+          }
+        } else {
           throw new Error(stderr || "Failed to post review")
         }
       }
 
-      return { posted: newComments.length, skipped }
+      return { posted: newComments.length, inlinePosted, inlineFailed, skipped }
     },
     catch: (error) =>
       new GitError({
@@ -599,17 +679,24 @@ export const reviewCommand = Command.make(
           yield* Console.log(`Found ${existingComments.length} existing comment(s)`)
         }
 
-        const shouldPost = yield* confirm("\nPost this review to GitHub?")
-        if (shouldPost) {
-          const result = yield* postReview(prInfo.number, review, existingComments)
-          if (result.skipped > 0) {
-            yield* Console.log(`✓ Review posted (${result.posted} comments, ${result.skipped} skipped as duplicates)`)
-          } else {
-            yield* Console.log(`✓ Review posted (${result.posted} comments)`)
-          }
-        } else {
-          yield* Console.log("Review not posted.")
+        // --post flag means post without confirmation (for automation)
+        yield* Console.log("\nPosting review to GitHub...")
+        const result = yield* postReview(prInfo.number, review, existingComments)
+
+        // Build status message
+        const parts: string[] = []
+        if (result.inlinePosted > 0) {
+          parts.push(`${result.inlinePosted} inline`)
         }
+        if (result.inlineFailed > 0) {
+          parts.push(`${result.inlineFailed} in body`)
+        }
+        if (result.skipped > 0) {
+          parts.push(`${result.skipped} skipped`)
+        }
+
+        const status = parts.length > 0 ? ` (${parts.join(", ")})` : ""
+        yield* Console.log(`✓ Review posted${status}`)
       }
     }).pipe(
       Effect.catchTags({
