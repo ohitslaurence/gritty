@@ -128,32 +128,53 @@ const loginCommand = Command.make("login", {}, () =>
 ).pipe(Command.withDescription("Authenticate with Anthropic API"))
 
 /**
+ * Provider info for status display.
+ */
+const PROVIDERS = [
+  { name: "Anthropic", envVar: "ANTHROPIC_API_KEY", prefix: "sk-ant-" },
+  { name: "OpenAI", envVar: "OPENAI_API_KEY", prefix: "sk-" },
+] as const
+
+/**
  * The auth status command.
  */
 const statusCommand = Command.make("status", {}, () =>
   Effect.gen(function* () {
     const auth = yield* AuthService
 
-    // Check env var first
-    const envKey = process.env["ANTHROPIC_API_KEY"]
-    if (envKey) {
-      yield* Console.log(`✓ Authenticated via ANTHROPIC_API_KEY (${maskApiKey(envKey)})`)
-      return
+    yield* Console.log("Provider Status:")
+    yield* Console.log("")
+
+    let anyAuthenticated = false
+
+    // Check each provider
+    for (const provider of PROVIDERS) {
+      const envKey = process.env[provider.envVar]
+      if (envKey) {
+        yield* Console.log(`  ${provider.name}: ✓ ${provider.envVar} (${maskApiKey(envKey)})`)
+        anyAuthenticated = true
+      } else {
+        yield* Console.log(`  ${provider.name}: ✗ ${provider.envVar} not set`)
+      }
     }
 
-    // Check stored credentials
+    // Check stored Anthropic credentials (legacy)
     const stored = yield* auth.getCredentialsInfo()
     if (stored) {
       const createdDate = new Date(stored.createdAt).toLocaleDateString()
-      yield* Console.log(`✓ Authenticated (key: ${maskApiKey(stored.apiKey)})`)
+      yield* Console.log("")
+      yield* Console.log(`Stored credentials (Anthropic):`)
+      yield* Console.log(`  Key: ${maskApiKey(stored.apiKey)}`)
       yield* Console.log(`  Created: ${createdDate}`)
       yield* Console.log(`  Source: ~/.config/gritty/auth.json`)
-      return
+      anyAuthenticated = true
     }
 
-    yield* Console.log("✗ Not authenticated")
-    yield* Console.log("")
-    yield* Console.log("Run 'gritty auth login' to authenticate.")
+    if (!anyAuthenticated) {
+      yield* Console.log("")
+      yield* Console.log("Run 'gritty auth login' to authenticate with Anthropic.")
+      yield* Console.log("For OpenAI, set OPENAI_API_KEY environment variable.")
+    }
   }).pipe(
     Effect.catchTag("ConfigError", (e) => Console.error(`\n✗ ${e.message}`))
   )
@@ -190,6 +211,6 @@ const logoutCommand = Command.make("logout", {}, () =>
  * The main auth command with subcommands.
  */
 export const authCommand = Command.make("auth").pipe(
-  Command.withDescription("Manage Anthropic API authentication"),
+  Command.withDescription("Manage AI provider authentication"),
   Command.withSubcommands([loginCommand, statusCommand, logoutCommand])
 )

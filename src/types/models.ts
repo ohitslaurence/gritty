@@ -10,17 +10,6 @@ export const SpeedTier = Schema.Literal("fast", "medium", "slow")
 export type SpeedTier = typeof SpeedTier.Type
 
 /**
- * Model IDs for each speed tier.
- */
-export const MODEL_IDS = {
-  fast: "claude-3-5-haiku-latest",
-  medium: "claude-sonnet-4-20250514",
-  slow: "claude-opus-4-20250514",
-} as const
-
-export type ModelId = (typeof MODEL_IDS)[SpeedTier]
-
-/**
  * Commit style detection result.
  */
 export const CommitStyle = Schema.Union(
