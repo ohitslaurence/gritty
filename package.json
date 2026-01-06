@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "bun run src/index.ts",
-    "build": "bun build src/index.ts --compile --outfile dist/gritty",
+    "build": "bun build src/index.ts --compile --minify --sourcemap=none --outfile dist/gritty",
     "install:global": "mkdir -p ~/.local/bin && ln -sf $(pwd)/dist/gritty ~/.local/bin/gritty",
     "release": "bun run check && bun run build && echo '✓ gritty rebuilt'",
     "check": "bun run lint && bun run typecheck && bun test",
