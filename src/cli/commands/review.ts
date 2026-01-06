@@ -32,13 +32,17 @@ import {
  * Convert a glob pattern to a regex for matching file paths.
  * Supports: ** (any path), * (any segment), ? (single char)
  */
-const globToRegex = (pattern: string): RegExp => {
+export const globToRegex = (pattern: string): RegExp => {
   const escaped = pattern
     .replace(/[.+^${}()|[\]\\]/g, "\\$&") // Escape regex special chars
-    .replace(/\*\*/g, "{{GLOBSTAR}}") // Placeholder for **
+    .replace(/\*\*\//g, "{{GLOBSTAR_SLASH}}") // Placeholder for **/
+    .replace(/\/\*\*/g, "{{SLASH_GLOBSTAR}}") // Placeholder for /**
+    .replace(/\*\*/g, "{{GLOBSTAR}}") // Placeholder for standalone **
     .replace(/\*/g, "[^/]*") // * matches anything except /
     .replace(/\?/g, ".") // ? matches single char
-    .replace(/{{GLOBSTAR}}/g, ".*") // ** matches anything including /
+    .replace(/{{GLOBSTAR_SLASH}}/g, "(.*\\/)?") // **/ matches zero or more dirs
+    .replace(/{{SLASH_GLOBSTAR}}/g, "(\\/.*)?") // /** matches zero or more trailing
+    .replace(/{{GLOBSTAR}}/g, ".*") // ** matches anything
 
   return new RegExp(`^${escaped}$`)
 }
@@ -46,7 +50,7 @@ const globToRegex = (pattern: string): RegExp => {
 /**
  * Check if a file path matches any exclusion pattern.
  */
-const isExcluded = (filePath: string, patterns: readonly string[]): boolean => {
+export const isExcluded = (filePath: string, patterns: readonly string[]): boolean => {
   for (const pattern of patterns) {
     if (globToRegex(pattern).test(filePath)) {
       return true
@@ -58,7 +62,7 @@ const isExcluded = (filePath: string, patterns: readonly string[]): boolean => {
 /**
  * Filter out excluded files based on config patterns.
  */
-const filterExcludedFiles = (
+export const filterExcludedFiles = (
   files: readonly PRFile[],
   exclusions: readonly string[]
 ): readonly PRFile[] => {
