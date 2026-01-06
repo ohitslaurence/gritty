@@ -150,37 +150,90 @@ export interface PRFile {
 }
 
 /**
+ * Parse a unified diff into per-file patches.
+ */
+const parseDiffByFile = (diff: string): Map<string, string> => {
+  const patches = new Map<string, string>()
+  const lines = diff.split("\n")
+
+  let currentFile: string | null = null
+  let currentPatch: string[] = []
+
+  for (const line of lines) {
+    // New file starts with "diff --git a/path b/path"
+    if (line.startsWith("diff --git ")) {
+      // Save previous file's patch
+      if (currentFile && currentPatch.length > 0) {
+        patches.set(currentFile, currentPatch.join("\n"))
+      }
+
+      // Extract file path from "diff --git a/path b/path"
+      const match = line.match(/diff --git a\/.+ b\/(.+)/)
+      currentFile = match?.[1] ?? null
+      currentPatch = [line]
+    } else if (currentFile) {
+      currentPatch.push(line)
+    }
+  }
+
+  // Don't forget the last file
+  if (currentFile && currentPatch.length > 0) {
+    patches.set(currentFile, currentPatch.join("\n"))
+  }
+
+  return patches
+}
+
+/**
  * Get changed files in a PR with their diffs.
  */
 export const getPRFiles = (prNumber: number): Effect.Effect<readonly PRFile[], GitError> =>
   Effect.tryPromise({
     try: async () => {
-      const proc = Bun.spawn(
-        ["gh", "pr", "view", String(prNumber), "--json", "files"],
-        { stdout: "pipe", stderr: "pipe" }
-      )
-      const stdout = await new Response(proc.stdout).text()
-      const stderr = await new Response(proc.stderr).text()
-      await proc.exited
+      // Get file metadata and full diff in parallel
+      const [metaProc, diffProc] = await Promise.all([
+        (async () => {
+          const proc = Bun.spawn(
+            ["gh", "pr", "view", String(prNumber), "--json", "files"],
+            { stdout: "pipe", stderr: "pipe" }
+          )
+          const stdout = await new Response(proc.stdout).text()
+          const stderr = await new Response(proc.stderr).text()
+          await proc.exited
+          return { exitCode: proc.exitCode, stdout, stderr }
+        })(),
+        (async () => {
+          const proc = Bun.spawn(
+            ["gh", "pr", "diff", String(prNumber)],
+            { stdout: "pipe", stderr: "pipe" }
+          )
+          const stdout = await new Response(proc.stdout).text()
+          const stderr = await new Response(proc.stderr).text()
+          await proc.exited
+          return { exitCode: proc.exitCode, stdout, stderr }
+        })(),
+      ])
 
-      if (proc.exitCode !== 0) {
-        throw new Error(stderr || `Failed to get files for PR #${prNumber}`)
+      if (metaProc.exitCode !== 0) {
+        throw new Error(metaProc.stderr || `Failed to get files for PR #${prNumber}`)
       }
 
-      const data = JSON.parse(stdout) as {
+      const data = JSON.parse(metaProc.stdout) as {
         files: Array<{
           path: string
           additions: number
           deletions: number
-          patch?: string
         }>
       }
+
+      // Parse the full diff to get per-file patches
+      const patches = diffProc.exitCode === 0 ? parseDiffByFile(diffProc.stdout) : new Map<string, string>()
 
       return data.files.map((f) => ({
         path: f.path,
         additions: f.additions,
         deletions: f.deletions,
-        patch: f.patch || "",
+        patch: patches.get(f.path) || "",
       }))
     },
     catch: (error) =>
