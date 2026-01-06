@@ -23,7 +23,8 @@ const execGit = (
       if (exitCode !== 0) {
         throw new Error(stderr || `git ${args[0]} failed with exit code ${exitCode}`)
       }
-      return stdout.trim()
+      // Use trimEnd to preserve leading whitespace (important for git status --porcelain)
+      return stdout.trimEnd()
     },
     catch: (error) =>
       new GitError({
@@ -102,6 +103,31 @@ export const GitServiceLive = Layer.succeed(
     getStatus: () => execGit("status", "--porcelain").pipe(Effect.map(parseStatus)),
 
     stageAll: () => execGit("add", "-A").pipe(Effect.asVoid),
+
+    stageFiles: (files) =>
+      files.length > 0
+        ? execGit("add", "--", ...files).pipe(Effect.asVoid)
+        : Effect.void,
+
+    unstageAll: () => execGit("reset", "HEAD").pipe(Effect.asVoid),
+
+    getChangedFiles: () =>
+      execGit("status", "--porcelain").pipe(
+        Effect.map((output) => {
+          if (!output.trim()) return []
+          return output
+            .split("\n")
+            .filter((line) => line.trim())
+            .map((line) => line.slice(3)) // Remove status prefix
+        })
+      ),
+
+    getDiffForFiles: (files) =>
+      files.length > 0
+        ? execGit("diff", "--staged", "--", ...files).pipe(
+            Effect.map((output) => DiffContent(output))
+          )
+        : Effect.succeed(DiffContent("")),
 
     getBranchName: () =>
       execGit("rev-parse", "--abbrev-ref", "HEAD").pipe(

@@ -20,6 +20,10 @@ export const TestGitService = {
         getStatus:
           impl.getStatus ?? (() => Effect.succeed({ staged: [], unstaged: [], untracked: [] })),
         stageAll: impl.stageAll ?? (() => Effect.void),
+        stageFiles: impl.stageFiles ?? (() => Effect.void),
+        unstageAll: impl.unstageAll ?? (() => Effect.void),
+        getChangedFiles: impl.getChangedFiles ?? (() => Effect.succeed([])),
+        getDiffForFiles: impl.getDiffForFiles ?? (() => Effect.succeed(DiffContent(""))),
         getBranchName: impl.getBranchName ?? (() => Effect.succeed(BranchName("main"))),
         isGitRepo: impl.isGitRepo ?? (() => Effect.succeed(true)),
       })
@@ -65,6 +69,10 @@ export const TestGitService = {
       commit: () => Effect.void,
       getStatus: () => Effect.succeed({ staged: [], unstaged: [], untracked: [] }),
       stageAll: () => Effect.void,
+      stageFiles: () => Effect.void,
+      unstageAll: () => Effect.void,
+      getChangedFiles: () => Effect.succeed([]),
+      getDiffForFiles: () => Effect.succeed(DiffContent("")),
       getBranchName: () => Effect.succeed(BranchName("main")),
       isGitRepo: () => Effect.succeed(true),
     })
