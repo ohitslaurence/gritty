@@ -95,8 +95,15 @@ const executeCommit = (
 
     yield* Console.log(`\n  Message: ${message.split("\n")[0]}`)
 
-    // Auto-accept or confirm
-    const shouldCommit = options.accept ? true : yield* confirm("  Commit this?")
+    // Auto-accept skips confirmation and editor
+    if (options.accept) {
+      yield* git.commit(message)
+      yield* Console.log(`  ✓ Committed`)
+      return
+    }
+
+    // Interactive: confirm then optionally edit
+    const shouldCommit = yield* confirm("  Commit this?")
 
     if (shouldCommit) {
       const committed = yield* commitWithEditor(message)
@@ -148,14 +155,16 @@ export const composeCommand = Command.make(
 
       yield* Console.log(`Analyzing ${allFiles.length} changed files...`)
 
-      // Get diffs for all files
-      const filesWithDiffs: { path: string; diff: string }[] = []
-      for (const file of allFiles) {
-        const diff = yield* git.getFileDiff(file)
-        if (diff.trim()) {
-          filesWithDiffs.push({ path: file, diff })
-        }
-      }
+      // Get diffs for all files in parallel
+      const diffResults = yield* Effect.all(
+        allFiles.map((file) =>
+          git.getFileDiff(file).pipe(
+            Effect.map((diff) => ({ path: file, diff }))
+          )
+        ),
+        { concurrency: 10 }
+      )
+      const filesWithDiffs = diffResults.filter((f) => f.diff.trim())
 
       if (filesWithDiffs.length === 0) {
         return yield* Effect.fail(
