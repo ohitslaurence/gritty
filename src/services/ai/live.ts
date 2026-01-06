@@ -72,32 +72,53 @@ const buildUserPrompt = (diff: DiffContent, context?: string): string => {
  * Build the system prompt for commit composition.
  */
 const buildComposeSystemPrompt = (): string => {
-  return `You are an expert developer helping to organize code changes into logical commits.
+  return `You are an expert developer organizing code changes into logical commits.
 
-Analyze the provided file changes and group them into logical commits that:
-1. Keep related changes together (e.g., a feature and its tests)
-2. Separate unrelated changes (e.g., bug fixes vs new features vs refactoring)
-3. Maintain atomic commits (each commit should be self-contained and buildable)
-4. Follow the single responsibility principle for commits
+<task>
+Analyze the provided diffs and determine the optimal commit structure.
+A single commit is often the right answer - only split when genuinely beneficial.
+</task>
 
-For each proposed commit, provide:
-- A concise title (imperative mood, max 72 chars)
-- The files that belong in this commit
-- A brief reason explaining why these files are grouped together
+<when_to_use_single_commit>
+- All changes are part of the same feature or fix
+- Changes are small and cohesive (even across multiple files)
+- Files are tightly coupled (e.g., implementation + tests + types)
+- Splitting would create commits that don't make sense alone
+</when_to_use_single_commit>
 
-Output your response as valid JSON in this exact format:
+<when_to_split>
+- Changes address genuinely different concerns (unrelated bug fix + feature)
+- Changes could realistically be reviewed or reverted independently
+- Changes touch completely unrelated parts of the codebase
+- There's a clear logical separation (e.g., refactor then feature)
+</when_to_split>
+
+<rules>
+- Each commit MUST be atomic (builds and works independently)
+- Always keep implementations with their tests in the same commit
+- Commit titles: imperative mood, max 72 chars, no trailing period
+- Order commits logically: dependencies/setup before features
+- Bias toward fewer, cohesive commits over many small ones
+</rules>
+
+<output_format>
+Return ONLY valid JSON, no markdown or explanation:
 {
   "commits": [
     {
-      "title": "Add user authentication middleware",
-      "files": ["src/middleware/auth.ts", "src/middleware/auth.test.ts"],
-      "reason": "Auth middleware and its tests are logically coupled"
+      "title": "Add user authentication",
+      "files": ["src/auth.ts", "src/auth.test.ts"],
+      "reason": "Auth implementation with its tests"
     }
   ]
 }
-
-Output ONLY the JSON, no explanation or markdown.`
+</output_format>`
 }
+
+/**
+ * Max characters per file diff to include in the prompt.
+ */
+const MAX_DIFF_PER_FILE = 4000
 
 /**
  * Build the user prompt for commit composition.
@@ -107,13 +128,17 @@ const buildComposeUserPrompt = (
   feedback?: string
 ): string => {
   const filesSummary = files
-    .map((f) => `=== ${f.path} ===\n${f.diff.slice(0, 2000)}${f.diff.length > 2000 ? "\n[...truncated]" : ""}`)
+    .map((f) => {
+      const truncated = f.diff.length > MAX_DIFF_PER_FILE
+      const diff = truncated ? f.diff.slice(0, MAX_DIFF_PER_FILE) + "\n[...truncated]" : f.diff
+      return `<file path="${f.path}">\n${diff}\n</file>`
+    })
     .join("\n\n")
 
-  let prompt = `Analyze these ${files.length} changed files and group them into logical commits:\n\n${filesSummary}`
+  let prompt = `<changed_files count="${files.length}">\n${filesSummary}\n</changed_files>`
 
   if (feedback) {
-    prompt += `\n\nUser feedback on previous grouping: ${feedback}\nPlease adjust the groupings based on this feedback.`
+    prompt += `\n\n<user_feedback>\n${feedback}\n</user_feedback>\n\nPlease adjust the groupings based on the feedback above.`
   }
 
   return prompt
