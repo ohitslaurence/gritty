@@ -244,7 +244,7 @@ const commitCommand = Command.make("commit", { speed: speedOption }, (args) =>
 
 ## Using Gritty (Dogfooding)
 
-Use gritty itself for git workflows in this project:
+Use gritty itself for git workflows in this project. **Always create PRs instead of pushing directly to main** - this lets us dogfood the full PR workflow.
 
 ```bash
 # Create/switch branches
@@ -256,11 +256,16 @@ bun run dev -- compose --accept
 # Create PRs (ALWAYS use --accept)
 bun run dev -- pr --accept
 
+# Review PRs (use -p to post, -- before PR number)
+bun run dev -- review -p -- 123
+
 # Single commits
 bun run dev -- commit --accept
 ```
 
 **IMPORTANT:** Always use `--accept` flag when running gritty commands from Claude Code, since interactive prompts (y/n/e) cannot be answered.
+
+**IMPORTANT:** For review command, options must come before the PR number. Use `--` to separate: `review -p -- 123`
 
 ## Key Architectural Decisions
 
