@@ -23,14 +23,16 @@ export const branchCommand = Command.make(
       const isRepo = yield* git.isGitRepo()
       if (!isRepo) {
         yield* Console.error("\n✗ Not a git repository")
-        yield* Console.error("  Run this command from within a git repository")
+        yield* Console.error("  Run 'git init' to initialize a new repository")
+        yield* Console.error("  Or navigate to an existing git repository")
         return
       }
 
-      // Check if branch exists
+      // Check if branch exists first (for messaging), then switch/create atomically
       const exists = yield* git.branchExists(name)
 
-      // Switch to or create branch
+      // git checkout -b / git checkout handles the atomic operation
+      // If branch was created between our check and checkout, git will handle it
       yield* git.checkoutBranch(name)
 
       if (exists) {

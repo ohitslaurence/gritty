@@ -31,11 +31,19 @@ fi
 
 # Install dependencies
 echo "Installing dependencies..."
-bun install
+if ! bun install; then
+    echo -e "${RED}Error: Failed to install dependencies${NC}"
+    echo "Check your network connection and try again"
+    exit 1
+fi
 
 # Build binary
 echo "Building binary..."
-bun run build
+if ! bun run build; then
+    echo -e "${RED}Error: Failed to build binary${NC}"
+    echo "Check for TypeScript errors: bun run typecheck"
+    exit 1
+fi
 
 # Determine install location
 INSTALL_DIR="$HOME/.local/bin"
@@ -52,20 +60,57 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BINARY_PATH="$SCRIPT_DIR/dist/gritty"
 
+# Verify binary was created
+if [[ ! -f "$BINARY_PATH" ]]; then
+    echo -e "${RED}Error: Binary not found at $BINARY_PATH${NC}"
+    echo "Build may have failed silently. Try: bun run build"
+    exit 1
+fi
+
 if [[ "$INSTALL_DIR" == "/usr/local/bin" ]]; then
     echo "Installing to $INSTALL_DIR (requires sudo)..."
-    sudo ln -sf "$BINARY_PATH" "$INSTALL_DIR/gritty"
+    if ! sudo ln -sf "$BINARY_PATH" "$INSTALL_DIR/gritty"; then
+        echo -e "${RED}Error: Failed to create symlink (permission denied?)${NC}"
+        exit 1
+    fi
 else
     echo "Installing to $INSTALL_DIR..."
-    ln -sf "$BINARY_PATH" "$INSTALL_DIR/gritty"
+    if ! ln -sf "$BINARY_PATH" "$INSTALL_DIR/gritty"; then
+        echo -e "${RED}Error: Failed to create symlink${NC}"
+        exit 1
+    fi
+fi
+
+# Verify symlink works
+if [[ ! -x "$INSTALL_DIR/gritty" ]]; then
+    echo -e "${YELLOW}Warning: Symlink created but not executable${NC}"
+    echo "Try: chmod +x $BINARY_PATH"
+elif ! "$INSTALL_DIR/gritty" --version &> /dev/null; then
+    echo -e "${YELLOW}Warning: Symlink created but gritty doesn't run${NC}"
+    echo "Check that Bun is installed and in your PATH"
 fi
 
 # Check if install dir is in PATH
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo -e "${YELLOW}Warning: $INSTALL_DIR is not in your PATH${NC}"
     echo ""
-    echo "Add this to your ~/.bashrc or ~/.zshrc:"
-    echo -e "  ${GREEN}export PATH=\"$INSTALL_DIR:\$PATH\"${NC}"
+    # Detect shell config file using basename for robustness
+    SHELL_NAME="$(basename "$SHELL")"
+    SHELL_CONFIG=""
+    case "$SHELL_NAME" in
+        zsh)  SHELL_CONFIG="$HOME/.zshrc" ;;
+        bash) SHELL_CONFIG="$HOME/.bashrc" ;;
+        fish) SHELL_CONFIG="$HOME/.config/fish/config.fish" ;;
+    esac
+
+    if [[ -n "$SHELL_CONFIG" ]]; then
+        echo "Run this command to add to your PATH:"
+        # Use $HOME expansion and touch to ensure file exists
+        echo -e "  ${GREEN}touch $SHELL_CONFIG && echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> $SHELL_CONFIG && source $SHELL_CONFIG${NC}"
+    else
+        echo "Add this to your shell config:"
+        echo -e "  ${GREEN}export PATH=\"$INSTALL_DIR:\$PATH\"${NC}"
+    fi
     echo ""
 fi
 
