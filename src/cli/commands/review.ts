@@ -7,6 +7,7 @@ import { requireGhCli } from "../../core/gh-utils"
 import { listOpenPRs, getPRInfo, getPRDiff, parsePRNumber, type PRInfo } from "../../core/pr-utils"
 import { getExistingComments, postReview, type ExistingComment } from "../../core/review-comments"
 import { formatReview } from "../../core/review-format"
+import { getRepoContext } from "../../core/repo-context"
 
 /**
  * Optional PR argument (number or URL).
@@ -149,14 +150,24 @@ export const reviewCommand = Command.make(
       // Determine speed - review defaults to slow (Opus) for better analysis
       const speed = fast ? "fast" : slow ? "slow" : "slow"
 
+      // Fetch repo context (CLAUDE.md, README, etc.)
+      const repoContext = yield* getRepoContext()
+      if (repoContext.guidelines) {
+        yield* Console.log("Found repo guidelines")
+      }
+
       yield* Console.log(`Analyzing diff (${speed} mode)...`)
 
       // Get AI review
-      const review = yield* ai.reviewPR(DiffContent(diff), {
+      const reviewOptions: Parameters<typeof ai.reviewPR>[1] = {
         speed,
         title: prInfo.title,
         description: prInfo.body,
-      })
+      }
+      if (repoContext.guidelines) reviewOptions.guidelines = repoContext.guidelines
+      if (repoContext.readme) reviewOptions.readme = repoContext.readme
+
+      const review = yield* ai.reviewPR(DiffContent(diff), reviewOptions)
 
       // Display review
       yield* Console.log(formatReview(review, prInfo.number))
