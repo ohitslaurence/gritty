@@ -13,6 +13,15 @@ const DEFAULT_PR_DESCRIPTION = {
 }
 
 /**
+ * Default PR review for tests.
+ */
+const DEFAULT_PR_REVIEW = {
+  summary: "Code looks good overall.",
+  verdict: "approve" as const,
+  comments: [],
+}
+
+/**
  * Create a test AIService with configurable behavior.
  */
 export const TestAIService = {
@@ -29,6 +38,7 @@ export const TestAIService = {
             { title: "test: default commit", files: [], reason: "test" },
           ]),
         generatePRDescription: () => Effect.succeed(DEFAULT_PR_DESCRIPTION),
+        reviewPR: () => Effect.succeed(DEFAULT_PR_REVIEW),
       })
     ),
 
@@ -51,6 +61,9 @@ export const TestAIService = {
         generatePRDescription:
           impl.generatePRDescription ??
           (() => Effect.succeed(DEFAULT_PR_DESCRIPTION)),
+        reviewPR:
+          impl.reviewPR ??
+          (() => Effect.succeed(DEFAULT_PR_REVIEW)),
       })
     ),
 
@@ -70,6 +83,7 @@ export const TestAIService = {
             { title: "test: captured commit", files: [], reason: "test" },
           ]),
         generatePRDescription: () => Effect.succeed(DEFAULT_PR_DESCRIPTION),
+        reviewPR: () => Effect.succeed(DEFAULT_PR_REVIEW),
       })
     ),
 
@@ -83,6 +97,7 @@ export const TestAIService = {
         generateCommitMessage: () => Effect.fail(error),
         composeCommits: () => Effect.fail(error),
         generatePRDescription: () => Effect.fail(error),
+        reviewPR: () => Effect.fail(error),
       })
     ),
 
@@ -98,6 +113,7 @@ export const TestAIService = {
           { title: "feat: add new feature", files: [], reason: "default test" },
         ]),
       generatePRDescription: () => Effect.succeed(DEFAULT_PR_DESCRIPTION),
+      reviewPR: () => Effect.succeed(DEFAULT_PR_REVIEW),
     })
   ),
 }

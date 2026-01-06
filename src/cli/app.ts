@@ -12,13 +12,14 @@ import { commitCommand } from "./commands/commit"
 import { composeCommand } from "./commands/compose"
 import { configCommand } from "./commands/config"
 import { prCommand } from "./commands/pr"
+import { reviewCommand } from "./commands/review"
 
 /**
  * The main gritty CLI command.
  */
 const grittyCommand = Command.make("gritty").pipe(
   Command.withDescription("AI-powered Git CLI tool"),
-  Command.withSubcommands([commitCommand, composeCommand, prCommand, branchCommand, authCommand, configCommand])
+  Command.withSubcommands([commitCommand, composeCommand, prCommand, reviewCommand, branchCommand, authCommand, configCommand])
 )
 
 /**

@@ -139,6 +139,32 @@ gritty pr --context "implements RFC-123"
 
 Requires [GitHub CLI](https://cli.github.com/) to be installed and authenticated (`gh auth login`).
 
+### Review Pull Requests
+
+AI-powered code review for any PR:
+
+```bash
+# Review a specific PR by number
+gritty review 123
+
+# Review a PR by URL
+gritty review https://github.com/owner/repo/pull/123
+
+# List open PRs and select one to review
+gritty review
+
+# Post the review to GitHub (default: just display)
+gritty review 123 --post
+```
+
+**How it works:**
+1. Fetches PR diff from GitHub
+2. AI analyzes code for bugs, suggestions, and improvements
+3. Provides verdict (approve/request changes/comment)
+4. Optionally posts review to GitHub
+
+Requires [GitHub CLI](https://cli.github.com/) to be installed and authenticated.
+
 ### Quick Branching
 
 Simple branch management without typing `git checkout -b`:
@@ -222,6 +248,7 @@ src/
 │       ├── commit.ts       # Commit command
 │       ├── compose.ts      # Compose command
 │       ├── pr.ts           # PR command
+│       ├── review.ts       # Review command
 │       ├── branch.ts       # Branch command
 │       ├── config.ts       # Config commands
 │       └── auth.ts         # Auth commands
@@ -275,7 +302,7 @@ src/
 ### v0.5 — More Commands (In Progress)
 - [x] `gritty pr` — Generate PR descriptions
 - [x] `gritty branch` — Quick branch creation/switching
-- [ ] `gritty review` — AI code review
+- [x] `gritty review` — AI code review
 - [ ] `gritty changelog` — Generate changelogs
 - [ ] `gritty explain` — Explain code changes
 

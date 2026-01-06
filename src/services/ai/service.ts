@@ -21,6 +21,25 @@ export interface PRDescription {
 }
 
 /**
+ * A single review comment on a specific part of the code.
+ */
+export interface ReviewComment {
+  readonly file: string
+  readonly line?: number
+  readonly severity: "critical" | "suggestion" | "nitpick" | "praise"
+  readonly comment: string
+}
+
+/**
+ * Generated PR review.
+ */
+export interface PRReview {
+  readonly summary: string
+  readonly verdict: "approve" | "request_changes" | "comment"
+  readonly comments: readonly ReviewComment[]
+}
+
+/**
  * Service interface for AI operations.
  */
 export interface AIServiceImpl {
@@ -52,6 +71,14 @@ export interface AIServiceImpl {
     diff: DiffContent,
     options: { speed: SpeedTier; context?: string; baseBranch: string; branchName: string }
   ) => Effect.Effect<PRDescription, AIError>
+
+  /**
+   * Review a PR diff and provide feedback.
+   */
+  readonly reviewPR: (
+    diff: DiffContent,
+    options: { speed: SpeedTier; title: string; description: string }
+  ) => Effect.Effect<PRReview, AIError>
 }
 
 /**
