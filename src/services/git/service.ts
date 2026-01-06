@@ -68,6 +68,46 @@ export interface GitServiceImpl {
    * Get the diff for a single file.
    */
   readonly getFileDiff: (file: string) => Effect.Effect<string, GitError>
+
+  /**
+   * Switch to a branch, creating it if it doesn't exist.
+   */
+  readonly checkoutBranch: (
+    name: string,
+    options?: { create?: boolean }
+  ) => Effect.Effect<void, GitError>
+
+  /**
+   * Check if a branch exists.
+   */
+  readonly branchExists: (name: string) => Effect.Effect<boolean, GitError>
+
+  /**
+   * Get the default branch (main or master).
+   */
+  readonly getDefaultBranch: () => Effect.Effect<BranchName, GitError>
+
+  /**
+   * Get commits ahead of a base branch.
+   */
+  readonly getCommitsAhead: (
+    base: string
+  ) => Effect.Effect<readonly Commit[], GitError>
+
+  /**
+   * Get diff from base branch to HEAD.
+   */
+  readonly getDiffFromBranch: (base: string) => Effect.Effect<DiffContent, GitError>
+
+  /**
+   * Check if current branch has been pushed to remote.
+   */
+  readonly hasRemote: () => Effect.Effect<boolean, GitError>
+
+  /**
+   * Push current branch to remote.
+   */
+  readonly push: (options?: { setUpstream?: boolean }) => Effect.Effect<void, GitError>
 }
 
 /**

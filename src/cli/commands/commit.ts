@@ -190,4 +190,4 @@ export const commitCommand = Command.make(
           ),
       })
     )
-).pipe(Command.withDescription("Generate a commit message for staged changes"))
+).pipe(Command.withDescription("Generate a commit message (auto-stages all changes unless --staged-only)"))

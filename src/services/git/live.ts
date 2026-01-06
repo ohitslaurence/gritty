@@ -148,12 +148,86 @@ export const GitServiceLive = Layer.succeed(
             ? Effect.succeed(diff)
             : execGit("diff", "--", file)
         ),
-        Effect.catchAll(() =>
-          // For untracked files, show the whole file
-          execGit("diff", "--no-index", "/dev/null", file).pipe(
-            Effect.catchAll(() => Effect.succeed(""))
-          )
-        )
+        Effect.flatMap((diff) =>
+          diff.trim()
+            ? Effect.succeed(diff)
+            : // For untracked files, read file content directly
+              // (git diff --no-index returns exit code 1 on differences)
+              Effect.tryPromise({
+                try: async () => {
+                  const content = await Bun.file(file).text()
+                  // Format as a simple diff-like output
+                  return `+++ ${file}\n${content.split("\n").map((line) => `+${line}`).join("\n")}`
+                },
+                catch: () => new GitError({ operation: "read", message: `Failed to read ${file}`, cause: undefined }),
+              })
+        ),
+        Effect.catchAll(() => Effect.succeed(""))
       ),
+
+    checkoutBranch: (name, options) =>
+      Effect.gen(function* () {
+        if (options?.create) {
+          // Create and switch
+          yield* execGit("checkout", "-b", name)
+        } else {
+          // Try to switch, create if doesn't exist
+          const exists = yield* execGit("show-ref", "--verify", `refs/heads/${name}`).pipe(
+            Effect.map(() => true),
+            Effect.catchAll(() => Effect.succeed(false))
+          )
+          if (exists) {
+            yield* execGit("checkout", name)
+          } else {
+            yield* execGit("checkout", "-b", name)
+          }
+        }
+      }),
+
+    branchExists: (name) =>
+      execGit("show-ref", "--verify", `refs/heads/${name}`).pipe(
+        Effect.map(() => true),
+        Effect.catchAll(() => Effect.succeed(false))
+      ),
+
+    getDefaultBranch: () =>
+      Effect.gen(function* () {
+        // Try main first, then master
+        const mainExists = yield* execGit("show-ref", "--verify", "refs/heads/main").pipe(
+          Effect.map(() => true),
+          Effect.catchAll(() => Effect.succeed(false))
+        )
+        if (mainExists) return BranchName("main")
+
+        const masterExists = yield* execGit("show-ref", "--verify", "refs/heads/master").pipe(
+          Effect.map(() => true),
+          Effect.catchAll(() => Effect.succeed(false))
+        )
+        if (masterExists) return BranchName("master")
+
+        // Fall back to main as default
+        return BranchName("main")
+      }),
+
+    getCommitsAhead: (base) =>
+      execGit("log", `${base}..HEAD`, "--pretty=format:%H|%s|%an|%at").pipe(
+        Effect.map(parseCommits)
+      ),
+
+    getDiffFromBranch: (base) =>
+      execGit("diff", `${base}..HEAD`).pipe(
+        Effect.map((output) => DiffContent(output))
+      ),
+
+    hasRemote: () =>
+      execGit("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}").pipe(
+        Effect.map(() => true),
+        Effect.catchAll(() => Effect.succeed(false))
+      ),
+
+    push: (options) =>
+      options?.setUpstream
+        ? execGit("push", "-u", "origin", "HEAD").pipe(Effect.asVoid)
+        : execGit("push").pipe(Effect.asVoid),
   })
 )

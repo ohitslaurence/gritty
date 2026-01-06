@@ -4,6 +4,19 @@ import type { Commit } from "../../types/models"
 import { GitService, type GitServiceImpl } from "./service"
 
 /**
+ * Default implementations for new git methods.
+ */
+const defaultBranchMethods = {
+  checkoutBranch: () => Effect.void,
+  branchExists: () => Effect.succeed(false),
+  getDefaultBranch: () => Effect.succeed(BranchName("main")),
+  getCommitsAhead: () => Effect.succeed([] as readonly Commit[]),
+  getDiffFromBranch: () => Effect.succeed(DiffContent("")),
+  hasRemote: () => Effect.succeed(false),
+  push: () => Effect.void,
+}
+
+/**
  * Create a test GitService with configurable behavior.
  */
 export const TestGitService = {
@@ -27,6 +40,13 @@ export const TestGitService = {
         getBranchName: impl.getBranchName ?? (() => Effect.succeed(BranchName("main"))),
         isGitRepo: impl.isGitRepo ?? (() => Effect.succeed(true)),
         getFileDiff: impl.getFileDiff ?? (() => Effect.succeed("")),
+        checkoutBranch: impl.checkoutBranch ?? defaultBranchMethods.checkoutBranch,
+        branchExists: impl.branchExists ?? defaultBranchMethods.branchExists,
+        getDefaultBranch: impl.getDefaultBranch ?? defaultBranchMethods.getDefaultBranch,
+        getCommitsAhead: impl.getCommitsAhead ?? defaultBranchMethods.getCommitsAhead,
+        getDiffFromBranch: impl.getDiffFromBranch ?? defaultBranchMethods.getDiffFromBranch,
+        hasRemote: impl.hasRemote ?? defaultBranchMethods.hasRemote,
+        push: impl.push ?? defaultBranchMethods.push,
       })
     ),
 
@@ -77,6 +97,7 @@ export const TestGitService = {
       getBranchName: () => Effect.succeed(BranchName("main")),
       isGitRepo: () => Effect.succeed(true),
       getFileDiff: () => Effect.succeed(""),
+      ...defaultBranchMethods,
     })
   ),
 }
