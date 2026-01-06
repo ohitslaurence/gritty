@@ -16,6 +16,10 @@ export const TestAIService = {
       AIService,
       AIService.of({
         generateCommitMessage: () => Effect.succeed(CommitMessage(response)),
+        composeCommits: () =>
+          Effect.succeed([
+            { title: "test: default commit", files: [], reason: "test" },
+          ]),
       })
     ),
 
@@ -29,6 +33,12 @@ export const TestAIService = {
         generateCommitMessage:
           impl.generateCommitMessage ??
           (() => Effect.succeed(CommitMessage("test: default commit message"))),
+        composeCommits:
+          impl.composeCommits ??
+          (() =>
+            Effect.succeed([
+              { title: "test: default commit", files: [], reason: "test" },
+            ])),
       })
     ),
 
@@ -43,6 +53,10 @@ export const TestAIService = {
       AIService.of({
         generateCommitMessage: (diff, options) =>
           Effect.succeed(CommitMessage(callback(diff, options))),
+        composeCommits: () =>
+          Effect.succeed([
+            { title: "test: captured commit", files: [], reason: "test" },
+          ]),
       })
     ),
 
@@ -54,6 +68,7 @@ export const TestAIService = {
       AIService,
       AIService.of({
         generateCommitMessage: () => Effect.fail(error),
+        composeCommits: () => Effect.fail(error),
       })
     ),
 
@@ -64,6 +79,10 @@ export const TestAIService = {
     AIService,
     AIService.of({
       generateCommitMessage: () => Effect.succeed(CommitMessage("feat: add new feature")),
+      composeCommits: () =>
+        Effect.succeed([
+          { title: "feat: add new feature", files: [], reason: "default test" },
+        ]),
     })
   ),
 }

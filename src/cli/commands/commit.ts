@@ -5,13 +5,8 @@ import { GitError, NoStagedChangesError, UserError } from "../../types/errors"
 import type { SpeedTier } from "../../types/models"
 import { AIService } from "../../services/ai/service"
 import { GitService } from "../../services/git/service"
-import {
-  formatGroups,
-  groupFilesByDirectory,
-  isDiffTooLarge,
-  shouldAutoSplit,
-  type FileGroup,
-} from "../../core/split"
+import { confirmWithEdit } from "../../core/prompt"
+import { isDiffTooLarge } from "../../core/split"
 
 /**
  * Speed tier options - mutually exclusive flags.
@@ -76,7 +71,6 @@ const getSpeedTier = (fast: boolean, _medium: boolean, slow: boolean): SpeedTier
 const formatMessage = (message: string): string => {
   const separator = "─".repeat(60)
   return `
-Generated commit message:
 ${separator}
 ${message}
 ${separator}`
@@ -107,140 +101,6 @@ const commitWithEditor = (message: string): Effect.Effect<void, GitError> =>
   })
 
 /**
- * Commit a single group of files (for split mode).
- */
-const commitGroup = (
-  git: GitService["Type"],
-  ai: AIService["Type"],
-  group: FileGroup,
-  options: {
-    speed: SpeedTier
-    recentCommits: readonly { hash: string; message: string; author: string; date: Date }[]
-    dryRun: boolean
-  }
-) =>
-  Effect.gen(function* () {
-    // Stage only this group's files
-    yield* git.stageFiles(group.files)
-
-    // Get diff for just these files
-    const diff = yield* git.getDiffForFiles(group.files)
-
-    if (!diff || diff.trim().length === 0) {
-      yield* Console.log(`  Skipping ${group.name} (no changes)`)
-      return
-    }
-
-    yield* Console.log(`\n  Generating message for ${group.name}...`)
-
-    // Generate commit message
-    const message = yield* ai.generateCommitMessage(DiffContent(diff), {
-      speed: options.speed,
-      recentCommits: options.recentCommits,
-      context: `This commit covers changes in: ${group.name}`,
-    })
-
-    yield* Console.log(formatMessage(message))
-
-    if (options.dryRun) {
-      return
-    }
-
-    // Open editor for review
-    yield* commitWithEditor(message)
-    yield* Console.log(`  ✓ Committed: ${message.split("\n")[0]}`)
-  })
-
-/**
- * Handle split commit workflow.
- */
-const handleSplitCommit = (
-  git: GitService["Type"],
-  ai: AIService["Type"],
-  allFiles: readonly string[],
-  options: {
-    speed: SpeedTier
-    dryRun: boolean
-  }
-) =>
-  Effect.gen(function* () {
-    // Group files by directory
-    const groups = groupFilesByDirectory(allFiles)
-
-    yield* Console.log(`Splitting ${allFiles.length} files into ${groups.length} commits:\n`)
-    yield* Console.log(formatGroups(groups))
-    yield* Console.log("")
-
-    // Fetch recent commits for style detection
-    const recentCommits = yield* git.getRecentCommits(10).pipe(
-      Effect.catchAll(() => Effect.succeed([] as const))
-    )
-
-    // First unstage everything to start fresh
-    yield* git.unstageAll().pipe(Effect.catchAll(() => Effect.void))
-
-    // Process each group
-    for (const group of groups) {
-      yield* commitGroup(git, ai, group, {
-        speed: options.speed,
-        recentCommits,
-        dryRun: options.dryRun,
-      })
-    }
-
-    if (options.dryRun) {
-      yield* Console.log("\n(Dry run - no commits created)")
-    } else {
-      yield* Console.log(`\n✓ Created ${groups.length} commits`)
-    }
-  })
-
-/**
- * Handle single commit workflow.
- */
-const handleSingleCommit = (
-  git: GitService["Type"],
-  ai: AIService["Type"],
-  diff: string,
-  options: {
-    speed: SpeedTier
-    dryRun: boolean
-    context: string | undefined
-  }
-) =>
-  Effect.gen(function* () {
-    yield* Console.log(`Analyzing changes (${options.speed} mode)...`)
-
-    // Fetch recent commits for style detection
-    const recentCommits = yield* git.getRecentCommits(10).pipe(
-      Effect.catchAll(() => Effect.succeed([] as const))
-    )
-
-    // Truncate diff if too large
-    const safeDiff = isDiffTooLarge(diff)
-      ? diff.slice(0, 80000) + "\n\n[... diff truncated ...]"
-      : diff
-
-    // Generate commit message
-    const message = yield* ai.generateCommitMessage(
-      DiffContent(safeDiff),
-      options.context
-        ? { speed: options.speed, context: options.context, recentCommits }
-        : { speed: options.speed, recentCommits }
-    )
-
-    yield* Console.log(formatMessage(message))
-
-    if (options.dryRun) {
-      return
-    }
-
-    // Open editor for review and commit
-    yield* commitWithEditor(message)
-    yield* Console.log(`\n✓ Committed: ${message.split("\n")[0]}`)
-  })
-
-/**
  * The commit command implementation.
  */
 export const commitCommand = Command.make(
@@ -262,24 +122,7 @@ export const commitCommand = Command.make(
       const speed = getSpeedTier(fast, medium, slow)
       const contextValue = Option.getOrUndefined(context)
 
-      // Get current status to check what we're working with
-      const status = yield* git.getStatus()
-      const allFiles = [...status.staged, ...status.unstaged, ...status.untracked]
-
-      if (allFiles.length === 0) {
-        return yield* Effect.fail(
-          new NoStagedChangesError({
-            message: "No changes found. Make some changes first!",
-          })
-        )
-      }
-
-      // Auto-split if we have a large changeset
-      if (shouldAutoSplit(allFiles)) {
-        return yield* handleSplitCommit(git, ai, allFiles, { speed, dryRun })
-      }
-
-      // Single commit flow
+      // Stage all changes unless --staged-only
       if (!stagedOnly) {
         yield* Console.log("Staging all changes...")
         yield* git.stageAll()
@@ -297,7 +140,49 @@ export const commitCommand = Command.make(
         )
       }
 
-      yield* handleSingleCommit(git, ai, diff, { speed, dryRun, context: contextValue })
+      yield* Console.log(`Analyzing changes (${speed} mode)...`)
+
+      // Fetch recent commits for style detection
+      const recentCommits = yield* git.getRecentCommits(10).pipe(
+        Effect.catchAll(() => Effect.succeed([] as const))
+      )
+
+      // Truncate diff if too large
+      const safeDiff = isDiffTooLarge(diff)
+        ? diff.slice(0, 80000) + "\n\n[... diff truncated ...]"
+        : diff
+
+      // Generate commit message
+      const message = yield* ai.generateCommitMessage(
+        DiffContent(safeDiff),
+        contextValue
+          ? { speed, context: contextValue, recentCommits }
+          : { speed, recentCommits }
+      )
+
+      yield* Console.log(formatMessage(message))
+
+      // Dry run stops here
+      if (dryRun) {
+        return
+      }
+
+      // Interactive confirmation
+      const response = yield* confirmWithEdit("\nCommit with this message?")
+
+      switch (response) {
+        case "yes":
+          yield* git.commit(message)
+          yield* Console.log(`\n✓ Committed: ${message.split("\n")[0]}`)
+          break
+        case "edit":
+          yield* commitWithEditor(message)
+          yield* Console.log(`\n✓ Committed`)
+          break
+        case "no":
+          yield* Console.log("\nAborted.")
+          break
+      }
     }).pipe(
       Effect.catchTags({
         NoStagedChangesError: (e) => Console.error(`\n✗ ${e.message}`),

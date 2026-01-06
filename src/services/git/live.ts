@@ -139,5 +139,21 @@ export const GitServiceLive = Layer.succeed(
         Effect.map(() => true),
         Effect.catchAll(() => Effect.succeed(false))
       ),
+
+    getFileDiff: (file) =>
+      // Try staged diff first, fall back to unstaged
+      execGit("diff", "--staged", "--", file).pipe(
+        Effect.flatMap((diff) =>
+          diff.trim()
+            ? Effect.succeed(diff)
+            : execGit("diff", "--", file)
+        ),
+        Effect.catchAll(() =>
+          // For untracked files, show the whole file
+          execGit("diff", "--no-index", "/dev/null", file).pipe(
+            Effect.catchAll(() => Effect.succeed(""))
+          )
+        )
+      ),
   })
 )

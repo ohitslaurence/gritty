@@ -1,0 +1,246 @@
+import { Command, Options } from "@effect/cli"
+import { Console, Effect } from "effect"
+import { DiffContent } from "../../types/branded"
+import { GitError, NoStagedChangesError, UserError } from "../../types/errors"
+import type { SpeedTier } from "../../types/models"
+import { AIService, type ProposedCommit } from "../../services/ai/service"
+import { GitService } from "../../services/git/service"
+import { confirmWithFeedback, promptText, confirm } from "../../core/prompt"
+
+/**
+ * Speed tier options.
+ */
+const fastOption = Options.boolean("fast").pipe(
+  Options.withAlias("f"),
+  Options.withDescription("Use Haiku for speed")
+)
+
+const slowOption = Options.boolean("slow").pipe(
+  Options.withAlias("s"),
+  Options.withDescription("Use Opus for quality")
+)
+
+const dryRunOption = Options.boolean("dry-run").pipe(
+  Options.withAlias("d"),
+  Options.withDescription("Show proposed commits without executing")
+)
+
+const composeOptions = {
+  fast: fastOption,
+  slow: slowOption,
+  dryRun: dryRunOption,
+}
+
+/**
+ * Determine speed tier from flags.
+ */
+const getSpeedTier = (fast: boolean, slow: boolean): SpeedTier => {
+  if (fast) return "fast"
+  if (slow) return "slow"
+  return "medium"
+}
+
+/**
+ * Format proposed commits for display.
+ */
+const formatProposedCommits = (commits: readonly ProposedCommit[]): string => {
+  const separator = "─".repeat(60)
+  const lines = [`\n${separator}`, "Proposed commits:", separator, ""]
+
+  commits.forEach((commit, i) => {
+    lines.push(`${i + 1}. ${commit.title}`)
+    lines.push(`   Files: ${commit.files.join(", ")}`)
+    lines.push(`   Reason: ${commit.reason}`)
+    lines.push("")
+  })
+
+  lines.push(separator)
+  return lines.join("\n")
+}
+
+/**
+ * Execute git commit with editor for review.
+ */
+const commitWithEditor = (message: string): Effect.Effect<void, GitError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const proc = Bun.spawn(["git", "commit", "-e", "-m", message], {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+      })
+      const exitCode = await proc.exited
+      if (exitCode !== 0) {
+        throw new Error(`Commit aborted or failed`)
+      }
+    },
+    catch: (error) =>
+      new GitError({
+        operation: "commit",
+        message: error instanceof Error ? error.message : String(error),
+        cause: error,
+      }),
+  })
+
+/**
+ * Execute a single proposed commit.
+ */
+const executeCommit = (
+  git: GitService["Type"],
+  ai: AIService["Type"],
+  commit: ProposedCommit,
+  options: {
+    speed: SpeedTier
+    recentCommits: readonly { hash: string; message: string; author: string; date: Date }[]
+  }
+) =>
+  Effect.gen(function* () {
+    // Unstage everything first
+    yield* git.unstageAll().pipe(Effect.catchAll(() => Effect.void))
+
+    // Stage only this commit's files
+    yield* git.stageFiles(commit.files)
+
+    // Get the actual diff for these files
+    const diff = yield* git.getDiffForFiles(commit.files)
+
+    if (!diff || diff.trim().length === 0) {
+      yield* Console.log(`  Skipping "${commit.title}" (no changes)`)
+      return
+    }
+
+    // Generate full commit message
+    yield* Console.log(`\n  Generating message for: ${commit.title}...`)
+    const message = yield* ai.generateCommitMessage(DiffContent(diff), {
+      speed: options.speed,
+      recentCommits: options.recentCommits,
+      context: `Commit title: ${commit.title}. Reason: ${commit.reason}`,
+    })
+
+    yield* Console.log(`\n  Message: ${message.split("\n")[0]}`)
+
+    // Confirm this commit
+    const shouldCommit = yield* confirm("  Commit this?")
+
+    if (shouldCommit) {
+      yield* commitWithEditor(message)
+      yield* Console.log(`  ✓ Committed`)
+    } else {
+      yield* Console.log(`  Skipped`)
+    }
+  })
+
+/**
+ * The compose command - intelligently splits changes into logical commits.
+ */
+export const composeCommand = Command.make(
+  "compose",
+  composeOptions,
+  ({ fast, slow, dryRun }) =>
+    Effect.gen(function* () {
+      const git = yield* GitService
+      const ai = yield* AIService
+
+      // Check if we're in a git repo
+      const isRepo = yield* git.isGitRepo()
+      if (!isRepo) {
+        return yield* Effect.fail(
+          new UserError({ message: "Not a git repository. Run this command inside a git project." })
+        )
+      }
+
+      const speed = getSpeedTier(fast, slow)
+
+      // Get all changed files
+      const status = yield* git.getStatus()
+      const allFiles = [...status.staged, ...status.unstaged, ...status.untracked]
+
+      if (allFiles.length === 0) {
+        return yield* Effect.fail(
+          new NoStagedChangesError({
+            message: "No changes found. Make some changes first!",
+          })
+        )
+      }
+
+      yield* Console.log(`Analyzing ${allFiles.length} changed files...`)
+
+      // Get diffs for all files
+      const filesWithDiffs: { path: string; diff: string }[] = []
+      for (const file of allFiles) {
+        const diff = yield* git.getFileDiff(file)
+        if (diff.trim()) {
+          filesWithDiffs.push({ path: file, diff })
+        }
+      }
+
+      if (filesWithDiffs.length === 0) {
+        return yield* Effect.fail(
+          new NoStagedChangesError({
+            message: "No actual changes found in files.",
+          })
+        )
+      }
+
+      // Main feedback loop
+      let feedback: string | undefined
+      let proposedCommits: readonly ProposedCommit[] = []
+
+      while (true) {
+        yield* Console.log(feedback ? "\nRe-analyzing with feedback..." : "\nAnalyzing changes with AI...")
+
+        // Get AI to propose commit groupings
+        proposedCommits = yield* ai.composeCommits(
+          filesWithDiffs,
+          feedback ? { speed, feedback } : { speed }
+        )
+
+        // Display proposed commits
+        yield* Console.log(formatProposedCommits(proposedCommits))
+
+        // Dry run stops here
+        if (dryRun) {
+          yield* Console.log("(Dry run - no commits created)")
+          return
+        }
+
+        // Ask for confirmation
+        const response = yield* confirmWithFeedback("Proceed with these commits?")
+
+        if (response === "yes") {
+          break
+        } else if (response === "no") {
+          yield* Console.log("\nAborted.")
+          return
+        } else {
+          // Get feedback
+          feedback = yield* promptText("\nHow should the commits be grouped differently?\n> ")
+          if (!feedback.trim()) {
+            yield* Console.log("No feedback provided, keeping current grouping.")
+            break
+          }
+        }
+      }
+
+      // Execute commits
+      yield* Console.log("\nExecuting commits...\n")
+
+      // Get recent commits for style
+      const recentCommits = yield* git.getRecentCommits(10).pipe(
+        Effect.catchAll(() => Effect.succeed([] as const))
+      )
+
+      for (const commit of proposedCommits) {
+        yield* executeCommit(git, ai, commit, { speed, recentCommits })
+      }
+
+      yield* Console.log(`\n✓ Compose complete`)
+    }).pipe(
+      Effect.catchTags({
+        NoStagedChangesError: (e) => Console.error(`\n✗ ${e.message}`),
+        UserError: (e) => Console.error(`\n✗ ${e.message}`),
+        GitError: (e) => Console.error(`\n✗ Git error: ${e.message}`),
+        AIError: (e) => Console.error(`\n✗ AI error: ${e.message}`),
+      })
+    )
+).pipe(Command.withDescription("Intelligently compose changes into logical commits"))

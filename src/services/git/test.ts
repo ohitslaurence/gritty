@@ -26,6 +26,7 @@ export const TestGitService = {
         getDiffForFiles: impl.getDiffForFiles ?? (() => Effect.succeed(DiffContent(""))),
         getBranchName: impl.getBranchName ?? (() => Effect.succeed(BranchName("main"))),
         isGitRepo: impl.isGitRepo ?? (() => Effect.succeed(true)),
+        getFileDiff: impl.getFileDiff ?? (() => Effect.succeed("")),
       })
     ),
 
@@ -75,6 +76,7 @@ export const TestGitService = {
       getDiffForFiles: () => Effect.succeed(DiffContent("")),
       getBranchName: () => Effect.succeed(BranchName("main")),
       isGitRepo: () => Effect.succeed(true),
+      getFileDiff: () => Effect.succeed(""),
     })
   ),
 }

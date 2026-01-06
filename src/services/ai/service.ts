@@ -1,7 +1,16 @@
 import { Context, Effect } from "effect"
 import type { CommitMessage, DiffContent } from "../../types/branded"
 import type { AIError } from "../../types/errors"
-import type { GenerateOptions } from "../../types/models"
+import type { GenerateOptions, SpeedTier } from "../../types/models"
+
+/**
+ * A proposed commit group from AI analysis.
+ */
+export interface ProposedCommit {
+  readonly title: string
+  readonly files: readonly string[]
+  readonly reason: string
+}
 
 /**
  * Service interface for AI operations.
@@ -16,6 +25,16 @@ export interface AIServiceImpl {
     diff: DiffContent,
     options: GenerateOptions
   ) => Effect.Effect<CommitMessage, AIError>
+
+  /**
+   * Analyze changes and propose logical commit groupings.
+   * @param files List of changed files with their diffs
+   * @param options Options including speed tier and optional feedback
+   */
+  readonly composeCommits: (
+    files: readonly { path: string; diff: string }[],
+    options: { speed: SpeedTier; feedback?: string }
+  ) => Effect.Effect<readonly ProposedCommit[], AIError>
 }
 
 /**

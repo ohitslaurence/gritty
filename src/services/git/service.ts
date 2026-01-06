@@ -63,6 +63,11 @@ export interface GitServiceImpl {
    * Check if we're in a git repository.
    */
   readonly isGitRepo: () => Effect.Effect<boolean, GitError>
+
+  /**
+   * Get the diff for a single file.
+   */
+  readonly getFileDiff: (file: string) => Effect.Effect<string, GitError>
 }
 
 /**
