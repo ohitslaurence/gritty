@@ -148,12 +148,21 @@ export const GitServiceLive = Layer.succeed(
             ? Effect.succeed(diff)
             : execGit("diff", "--", file)
         ),
-        Effect.catchAll(() =>
-          // For untracked files, show the whole file
-          execGit("diff", "--no-index", "/dev/null", file).pipe(
-            Effect.catchAll(() => Effect.succeed(""))
-          )
-        )
+        Effect.flatMap((diff) =>
+          diff.trim()
+            ? Effect.succeed(diff)
+            : // For untracked files, read file content directly
+              // (git diff --no-index returns exit code 1 on differences)
+              Effect.tryPromise({
+                try: async () => {
+                  const content = await Bun.file(file).text()
+                  // Format as a simple diff-like output
+                  return `+++ ${file}\n${content.split("\n").map((line) => `+${line}`).join("\n")}`
+                },
+                catch: () => new GitError({ operation: "read", message: `Failed to read ${file}`, cause: undefined }),
+              })
+        ),
+        Effect.catchAll(() => Effect.succeed(""))
       ),
 
     checkoutBranch: (name, options) =>

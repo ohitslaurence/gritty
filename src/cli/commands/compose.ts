@@ -243,4 +243,4 @@ export const composeCommand = Command.make(
           ),
       })
     )
-).pipe(Command.withDescription("Intelligently compose changes into logical commits"))
+).pipe(Command.withDescription("Analyze all changes (staged, unstaged, untracked) and compose into logical commits"))
