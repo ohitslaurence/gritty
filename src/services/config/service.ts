@@ -92,7 +92,7 @@ export const DEFAULT_REVIEW_EXCLUSIONS = [
  * Default model IDs using provider/model format.
  */
 export const DEFAULT_MODELS = {
-  fast: "openai/gpt-5.2-mini",
+  fast: "openai/gpt-5-mini",
   medium: "openai/gpt-5.2",
   slow: "openai/gpt-5.2",
 } as const
