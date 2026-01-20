@@ -14,6 +14,14 @@ export interface ProposedCommit {
 }
 
 /**
+ * Result of triaging whether changes should be composed into multiple commits.
+ */
+export interface TriageResult {
+  readonly shouldCompose: boolean
+  readonly reason: string
+}
+
+/**
  * Generated PR description.
  */
 export interface PRDescription {
@@ -128,6 +136,15 @@ export interface AIServiceImpl {
     commits: readonly { hash: string; message: string; author: string; date: string }[],
     options: { speed: SpeedTier }
   ) => Effect.Effect<string, AIError>
+
+  /**
+   * Triage changes to decide if they should be a single commit or composed.
+   * Uses fast model for quick decision-making.
+   * @param files List of changed files with their diffs (diffs will be truncated)
+   */
+  readonly triageCommit: (
+    files: readonly { path: string; diff: string }[]
+  ) => Effect.Effect<TriageResult, AIError>
 }
 
 /**

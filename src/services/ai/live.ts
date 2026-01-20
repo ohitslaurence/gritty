@@ -6,7 +6,7 @@ import type { GenerateOptions } from "../../types/models"
 import type { FilePreview, FileGroup, ChunkReviewResult } from "../../types/review-state"
 import { ConfigService } from "../config/service"
 import { ProviderService } from "../provider/service"
-import { AIService, type ProposedCommit, type PRDescription, type PRReview } from "./service"
+import { AIService, type ProposedCommit, type PRDescription, type PRReview, type TriageResult } from "./service"
 
 /**
  * Format recent commits as examples for the prompt.
@@ -632,6 +632,97 @@ ${commitList}`
 }
 
 /**
+ * Max characters per file diff for triage (aggressive truncation).
+ */
+const TRIAGE_MAX_DIFF_PER_FILE = 500
+
+/**
+ * Build the system prompt for commit triage.
+ */
+const buildTriageSystemPrompt = (): string => {
+  return `You are an expert developer deciding whether code changes should be ONE commit or MULTIPLE commits.
+
+<task>
+Analyze the file paths and brief diff summaries to determine the optimal commit strategy.
+Your job is ONLY to decide single vs. multiple commits - not to create the commits.
+</task>
+
+<single_commit_criteria>
+Return shouldCompose: FALSE when:
+- All changes are part of the same logical feature or fix
+- Generated/auto-updated files alongside their source (schema files, lockfiles, etc.)
+- Implementation + tests for the same feature
+- Tightly coupled files that would be confusing to commit separately
+- Small cohesive changes even across multiple files
+</single_commit_criteria>
+
+<multiple_commits_criteria>
+Return shouldCompose: TRUE when:
+- Changes address genuinely different concerns (unrelated bug fix + feature)
+- Mix of unrelated work (config changes + feature work + documentation)
+- Changes touch completely independent parts of the codebase
+- Work could realistically be reviewed or reverted independently
+</multiple_commits_criteria>
+
+<output_format>
+Return ONLY valid JSON:
+{
+  "shouldCompose": false,
+  "reason": "Brief explanation of why single/multiple commits"
+}
+
+IMPORTANT: shouldCompose means "should we split into multiple commits"
+- shouldCompose: false = make ONE commit (changes are related)
+- shouldCompose: true = make MULTIPLE commits (changes are unrelated)
+</output_format>
+
+Bias toward single commits (shouldCompose: false) - only suggest composing when there's a clear benefit.`
+}
+
+/**
+ * Build the user prompt for commit triage.
+ */
+const buildTriageUserPrompt = (files: readonly { path: string; diff: string }[]): string => {
+  const filesSummary = files
+    .map((f) => {
+      const truncated = f.diff.length > TRIAGE_MAX_DIFF_PER_FILE
+      const diff = truncated
+        ? f.diff.slice(0, TRIAGE_MAX_DIFF_PER_FILE) + "\n[...truncated]"
+        : f.diff
+      return `<file path="${f.path}">\n${diff}\n</file>`
+    })
+    .join("\n\n")
+
+  return `<changed_files count="${files.length}">\n${filesSummary}\n</changed_files>
+
+Should these changes be ONE commit or MULTIPLE commits?`
+}
+
+/**
+ * Parse the triage response from AI.
+ */
+const parseTriageResponse = (response: string): TriageResult => {
+  try {
+    const parsed = JSON.parse(response) as TriageResult
+    return parsed
+  } catch {
+    // Try to extract JSON from the response if it's wrapped in markdown
+    const jsonMatch = response.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]) as TriageResult
+        return parsed
+      } catch {
+        // Fall through to error
+      }
+    }
+    // Include response preview in error for debugging
+    const preview = response.length > 200 ? response.slice(0, 200) + "..." : response
+    throw new Error(`Failed to parse triage response as JSON. Response: ${preview}`)
+  }
+}
+
+/**
  * Check if an error is a rate limit error.
  */
 const isRateLimitError = (error: unknown): boolean => {
@@ -908,6 +999,43 @@ export const AIServiceLive = Layer.effect(
               })
 
               return text.trim()
+            },
+            catch: (error) =>
+              new AIError({
+                message: error instanceof Error ? error.message : String(error),
+                retryable: isRateLimitError(error),
+                cause: error,
+              }),
+          })
+        }),
+
+      triageCommit: (files) =>
+        Effect.gen(function* () {
+          // Always use fast model for triage (speed is critical)
+          const modelRef = yield* config.getModel("fast").pipe(
+            Effect.mapError(
+              (e) =>
+                new AIError({
+                  message: `Config error: ${e.message}`,
+                  retryable: false,
+                  cause: e,
+                })
+            )
+          )
+
+          // Get the language model from provider service
+          const model = yield* provider.getModel(modelRef)
+
+          return yield* Effect.tryPromise({
+            try: async () => {
+              const { text } = await generateText({
+                model,
+                maxOutputTokens: 512,
+                system: buildTriageSystemPrompt(),
+                prompt: buildTriageUserPrompt(files),
+              })
+
+              return parseTriageResponse(text.trim())
             },
             catch: (error) =>
               new AIError({

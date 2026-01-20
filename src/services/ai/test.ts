@@ -53,6 +53,14 @@ const DEFAULT_CHANGELOG = `## Features
 - Fixed a bug`
 
 /**
+ * Default triage result for tests (single commit).
+ */
+const DEFAULT_TRIAGE_RESULT = {
+  shouldCompose: false,
+  reason: "Changes are logically related",
+}
+
+/**
  * Create a test AIService with configurable behavior.
  */
 export const TestAIService = {
@@ -73,6 +81,7 @@ export const TestAIService = {
         groupFilesForReview: () => Effect.succeed(DEFAULT_FILE_GROUPS),
         reviewChunk: () => Effect.succeed(DEFAULT_CHUNK_REVIEW),
         generateChangelog: () => Effect.succeed(DEFAULT_CHANGELOG),
+        triageCommit: () => Effect.succeed(DEFAULT_TRIAGE_RESULT),
       })
     ),
 
@@ -107,6 +116,9 @@ export const TestAIService = {
         generateChangelog:
           impl.generateChangelog ??
           (() => Effect.succeed(DEFAULT_CHANGELOG)),
+        triageCommit:
+          impl.triageCommit ??
+          (() => Effect.succeed(DEFAULT_TRIAGE_RESULT)),
       })
     ),
 
@@ -130,6 +142,7 @@ export const TestAIService = {
         groupFilesForReview: () => Effect.succeed(DEFAULT_FILE_GROUPS),
         reviewChunk: () => Effect.succeed(DEFAULT_CHUNK_REVIEW),
         generateChangelog: () => Effect.succeed(DEFAULT_CHANGELOG),
+        triageCommit: () => Effect.succeed(DEFAULT_TRIAGE_RESULT),
       })
     ),
 
@@ -147,6 +160,7 @@ export const TestAIService = {
         groupFilesForReview: () => Effect.fail(error),
         reviewChunk: () => Effect.fail(error),
         generateChangelog: () => Effect.fail(error),
+        triageCommit: () => Effect.fail(error),
       })
     ),
 
@@ -166,6 +180,7 @@ export const TestAIService = {
       groupFilesForReview: () => Effect.succeed(DEFAULT_FILE_GROUPS),
       reviewChunk: () => Effect.succeed(DEFAULT_CHUNK_REVIEW),
       generateChangelog: () => Effect.succeed(DEFAULT_CHANGELOG),
+      triageCommit: () => Effect.succeed(DEFAULT_TRIAGE_RESULT),
     })
   ),
 }

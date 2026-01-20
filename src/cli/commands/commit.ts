@@ -5,9 +5,16 @@ import { NoStagedChangesError, UserError } from "../../types/errors"
 import { AIService } from "../../services/ai/service"
 import { ConfigService } from "../../services/config/service"
 import { GitService } from "../../services/git/service"
-import { confirmWithEdit } from "../../core/prompt"
+import { confirmWithEdit, confirm } from "../../core/prompt"
 import { isDiffTooLarge } from "../../core/split"
 import { commitWithEditor } from "../../core/git-utils"
+import { executeComposedCommits, formatProposedCommits } from "../../core/compose-executor"
+
+/**
+ * File count threshold for triage.
+ * Below this, skip triage and commit normally.
+ */
+const TRIAGE_THRESHOLD = 4
 
 /**
  * Speed tier options - mutually exclusive flags.
@@ -109,6 +116,94 @@ export const commitCommand = Command.make(
               : "No changes found (staged or unstaged). Make some changes first!",
           })
         )
+      }
+
+      // Get status to check file count for triage
+      const status = yield* git.getStatus()
+      const stagedFiles = status.staged
+      const fileCount = stagedFiles.length
+
+      // Triage: decide if we should compose instead
+      if (fileCount >= TRIAGE_THRESHOLD) {
+        yield* Console.log(`Analyzing ${fileCount} files for commit strategy...`)
+
+        // Get diffs for staged files
+        const diffResults = yield* Effect.all(
+          stagedFiles.map((file) =>
+            git.getFileDiff(file).pipe(
+              Effect.map((fileDiff) => ({ path: file, diff: fileDiff }))
+            )
+          ),
+          { concurrency: 10 }
+        )
+        const filesWithDiffs = diffResults.filter((f) => f.diff.trim())
+
+        // Run triage
+        const triage = yield* ai.triageCommit(filesWithDiffs)
+
+        if (triage.shouldCompose) {
+          yield* Console.log(`\n⚠ Triage suggests multiple commits: ${triage.reason}`)
+
+          // In accept mode, auto-switch to compose
+          if (accept) {
+            yield* Console.log("Switching to compose mode...")
+
+            // Get AI to propose commit groupings
+            const proposedCommits = yield* ai.composeCommits(filesWithDiffs, { speed })
+
+            // Display proposed commits
+            yield* Console.log(formatProposedCommits(proposedCommits))
+
+            // Dry run stops here
+            if (dryRun) {
+              yield* Console.log("(Dry run - no commits created)")
+              return
+            }
+
+            // Fetch recent commits for style
+            const recentCommits = yield* git.getRecentCommits(10).pipe(
+              Effect.catchAll(() => Effect.succeed([] as const))
+            )
+
+            // Execute composed commits
+            yield* executeComposedCommits(proposedCommits, { speed, accept, recentCommits })
+            return
+          }
+
+          // Interactive: ask user if they want to compose
+          const shouldCompose = yield* confirm("Would you like to compose into multiple commits?")
+
+          if (shouldCompose) {
+            yield* Console.log("\nAnalyzing changes for commit groupings...")
+
+            // Get AI to propose commit groupings
+            const proposedCommits = yield* ai.composeCommits(filesWithDiffs, { speed })
+
+            // Display proposed commits
+            yield* Console.log(formatProposedCommits(proposedCommits))
+
+            // Dry run stops here
+            if (dryRun) {
+              yield* Console.log("(Dry run - no commits created)")
+              return
+            }
+
+            const proceedWithCompose = yield* confirm("Proceed with these commits?")
+
+            if (proceedWithCompose) {
+              // Fetch recent commits for style
+              const recentCommits = yield* git.getRecentCommits(10).pipe(
+                Effect.catchAll(() => Effect.succeed([] as const))
+              )
+
+              // Execute composed commits
+              yield* executeComposedCommits(proposedCommits, { speed, accept, recentCommits })
+              return
+            }
+
+            yield* Console.log("\nContinuing with single commit...")
+          }
+        }
       }
 
       yield* Console.log(`Analyzing changes (${speed} mode)...`)

@@ -1,13 +1,12 @@
 import { Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
-import { DiffContent } from "../../types/branded"
 import { NoStagedChangesError, UserError } from "../../types/errors"
-import type { SpeedTier } from "../../types/models"
-import { AIService, type ProposedCommit } from "../../services/ai/service"
+import type { ProposedCommit } from "../../services/ai/service"
+import { AIService } from "../../services/ai/service"
 import { ConfigService } from "../../services/config/service"
 import { GitService } from "../../services/git/service"
-import { confirmWithFeedback, promptText, confirm } from "../../core/prompt"
-import { commitWithEditor } from "../../core/git-utils"
+import { confirmWithFeedback, promptText } from "../../core/prompt"
+import { executeComposedCommits, formatProposedCommits } from "../../core/compose-executor"
 
 /**
  * Speed tier options.
@@ -38,84 +37,6 @@ const composeOptions = {
   dryRun: dryRunOption,
   accept: acceptOption,
 }
-
-/**
- * Format proposed commits for display.
- */
-const formatProposedCommits = (commits: readonly ProposedCommit[]): string => {
-  const separator = "─".repeat(60)
-  const lines = [`\n${separator}`, "Proposed commits:", separator, ""]
-
-  commits.forEach((commit, i) => {
-    lines.push(`${i + 1}. ${commit.title}`)
-    lines.push(`   Files: ${commit.files.join(", ")}`)
-    lines.push(`   Reason: ${commit.reason}`)
-    lines.push("")
-  })
-
-  lines.push(separator)
-  return lines.join("\n")
-}
-
-/**
- * Execute a single proposed commit.
- */
-const executeCommit = (
-  git: GitService["Type"],
-  ai: AIService["Type"],
-  commit: ProposedCommit,
-  options: {
-    speed: SpeedTier
-    accept: boolean
-    recentCommits: readonly { hash: string; message: string; author: string; date: Date }[]
-  }
-) =>
-  Effect.gen(function* () {
-    // Unstage everything first
-    yield* git.unstageAll().pipe(Effect.catchAll(() => Effect.void))
-
-    // Stage only this commit's files
-    yield* git.stageFiles(commit.files)
-
-    // Get the actual diff for these files
-    const diff = yield* git.getDiffForFiles(commit.files)
-
-    if (!diff || diff.trim().length === 0) {
-      yield* Console.log(`  Skipping "${commit.title}" (no changes)`)
-      return
-    }
-
-    // Generate full commit message
-    yield* Console.log(`\n  Generating message for: ${commit.title}...`)
-    const message = yield* ai.generateCommitMessage(DiffContent(diff), {
-      speed: options.speed,
-      recentCommits: options.recentCommits,
-      context: `Commit title: ${commit.title}. Reason: ${commit.reason}`,
-    })
-
-    yield* Console.log(`\n  Message: ${message.split("\n")[0]}`)
-
-    // Auto-accept skips confirmation and editor
-    if (options.accept) {
-      yield* git.commit(message)
-      yield* Console.log(`  ✓ Committed`)
-      return
-    }
-
-    // Interactive: confirm then optionally edit
-    const shouldCommit = yield* confirm("  Commit this?")
-
-    if (shouldCommit) {
-      const committed = yield* commitWithEditor(message)
-      if (committed) {
-        yield* Console.log(`  ✓ Committed`)
-      } else {
-        yield* Console.log(`  Aborted`)
-      }
-    } else {
-      yield* Console.log(`  Skipped`)
-    }
-  })
 
 /**
  * The compose command - intelligently splits changes into logical commits.
@@ -219,19 +140,13 @@ export const composeCommand = Command.make(
         }
       }
 
-      // Execute commits
-      yield* Console.log("\nExecuting commits...\n")
-
       // Get recent commits for style
       const recentCommits = yield* git.getRecentCommits(10).pipe(
         Effect.catchAll(() => Effect.succeed([] as const))
       )
 
-      for (const commit of proposedCommits) {
-        yield* executeCommit(git, ai, commit, { speed, accept, recentCommits })
-      }
-
-      yield* Console.log(`\n✓ Compose complete`)
+      // Execute commits using shared executor
+      yield* executeComposedCommits(proposedCommits, { speed, accept, recentCommits })
     }).pipe(
       Effect.catchTags({
         NoStagedChangesError: (e) => Console.error(`\n✗ ${e.message}`),
