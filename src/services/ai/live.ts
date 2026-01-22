@@ -1030,9 +1030,13 @@ export const AIServiceLive = Layer.effect(
             try: async () => {
               const { text } = await generateText({
                 model,
-                maxOutputTokens: 512,
+                maxOutputTokens: 1024,
                 system: buildTriageSystemPrompt(),
                 prompt: buildTriageUserPrompt(files),
+                // Limit reasoning effort for simple triage decision
+                providerOptions: {
+                  openai: { reasoningEffort: "low" },
+                },
               })
 
               return parseTriageResponse(text.trim())
