@@ -82,12 +82,34 @@ const findFirstFile = (
   })
 
 /**
+ * Resolve the repository root (worktree-aware), falling back to cwd.
+ */
+const getRepoRoot = (): Effect.Effect<string, never> =>
+  Effect.promise(async () => {
+    try {
+      const proc = Bun.spawn(["git", "rev-parse", "--show-toplevel"], {
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const stdout = await new Response(proc.stdout).text()
+      const exitCode = await proc.exited
+      if (exitCode === 0 && stdout.trim()) {
+        return stdout.trim()
+      }
+    } catch {
+      // Not a git repo or git unavailable
+    }
+    return process.cwd()
+  })
+
+/**
  * Fetch repository context files for review.
+ * Reads from the repo root so guidelines are found from subdirectories and worktrees.
  * Reads files in parallel for performance, returns first match by priority.
  */
 export const getRepoContext = (): Effect.Effect<RepoContext, never> =>
   Effect.gen(function* () {
-    const cwd = process.cwd()
+    const cwd = yield* getRepoRoot()
 
     // Read guidelines and readme in parallel
     const [guidelines, readme] = yield* Effect.all([

@@ -215,7 +215,7 @@ export const GitServiceLive = Layer.succeed(
       ),
 
     getDiffFromBranch: (base) =>
-      execGit("diff", `${base}..HEAD`).pipe(
+      execGit("diff", `${base}...HEAD`).pipe(
         Effect.map((output) => DiffContent(output))
       ),
 
