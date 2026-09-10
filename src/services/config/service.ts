@@ -101,8 +101,8 @@ export const DEFAULT_REVIEW_EXCLUSIONS = [
  */
 export const DEFAULT_MODELS = {
   fast: "openai/gpt-5.6-luna",
-  medium: "openai/gpt-5.5",
-  slow: "openai/gpt-5.6-luna",
+  medium: "openai/gpt-5.6-terra",
+  slow: "openai/gpt-5.6-sol",
 } as const
 
 /**
