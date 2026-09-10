@@ -774,6 +774,10 @@ export const AIServiceLive = Layer.effect(
                 maxOutputTokens: 1024,
                 system: buildSystemPrompt(options),
                 prompt: buildUserPrompt(diff, options.context),
+                // Commit messages don't need deep reasoning; keep latency low
+                providerOptions: {
+                  openai: { reasoningEffort: "low" },
+                },
               })
 
               return CommitMessage(text.trim())
