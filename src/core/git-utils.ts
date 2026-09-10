@@ -18,10 +18,14 @@ export const getSpeedTier = (fast: boolean, slow: boolean): SpeedTier => {
  * Execute git commit with editor for review.
  * Returns true if commit succeeded, false if aborted.
  */
-export const commitWithEditor = (message: string): Effect.Effect<boolean, GitError> =>
+export const commitWithEditor = (
+  message: string,
+  trailers: readonly string[] = []
+): Effect.Effect<boolean, GitError> =>
   Effect.tryPromise({
     try: async () => {
-      const proc = Bun.spawn(["git", "commit", "-e", "-m", message], {
+      const trailerArgs = trailers.flatMap((t) => ["--trailer", t])
+      const proc = Bun.spawn(["git", "commit", "-e", "-m", message, ...trailerArgs], {
         stdin: "inherit",
         stdout: "inherit",
         stderr: "inherit",

@@ -210,6 +210,11 @@ const makeConfigService = (): ConfigService["Type"] => {
         return config.commit?.model?.default ?? "medium"
       }),
 
+    getCommitTrailers: () =>
+      Effect.map(load(), (config) => config.commit?.trailers ?? []),
+
+    getPRFooter: () => Effect.map(load(), (config) => config.pr?.footer ?? ""),
+
     getReviewExclusions: () =>
       Effect.gen(function* () {
         const config = yield* load()

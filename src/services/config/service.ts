@@ -39,6 +39,8 @@ export const GrittyConfigSchema = Schema.Struct({
       scopes: Schema.optional(Schema.Array(Schema.String)),
       maxSubjectLength: Schema.optional(Schema.Number),
       includeBody: Schema.optional(Schema.Literal("auto", "always", "never")),
+      // Trailers appended to every commit, e.g. ["Co-Authored-By: Bot <bot@example.com>"]
+      trailers: Schema.optional(Schema.Array(Schema.String)),
       // Legacy model config - still supported for backward compatibility
       model: Schema.optional(
         Schema.Struct({
@@ -48,6 +50,12 @@ export const GrittyConfigSchema = Schema.Struct({
           slow: Schema.optional(Schema.String),
         })
       ),
+    })
+  ),
+  pr: Schema.optional(
+    Schema.Struct({
+      // Footer appended to every PR body
+      footer: Schema.optional(Schema.String),
     })
   ),
   review: Schema.optional(
@@ -93,8 +101,8 @@ export const DEFAULT_REVIEW_EXCLUSIONS = [
  */
 export const DEFAULT_MODELS = {
   fast: "openai/gpt-5-mini",
-  medium: "openai/gpt-5.2",
-  slow: "openai/gpt-5.2",
+  medium: "openai/gpt-5.5",
+  slow: "openai/gpt-5.6-luna",
 } as const
 
 /**
@@ -122,6 +130,16 @@ export interface ConfigServiceImpl {
    * Returns configured patterns merged with defaults.
    */
   readonly getReviewExclusions: () => Effect.Effect<readonly string[], ConfigError>
+
+  /**
+   * Get trailers to append to every commit.
+   */
+  readonly getCommitTrailers: () => Effect.Effect<readonly string[], ConfigError>
+
+  /**
+   * Get footer to append to every PR body (empty string if none).
+   */
+  readonly getPRFooter: () => Effect.Effect<string, ConfigError>
 
   /**
    * Get provider configuration (API key, base URL, etc.).
