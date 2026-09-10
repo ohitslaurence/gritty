@@ -1,11 +1,12 @@
 import { Command, Options } from "@effect/cli"
-import { Console, Effect, Option } from "effect"
+import { Effect, Option } from "effect"
 import { AIService } from "../../services/ai/service"
 import { ConfigService } from "../../services/config/service"
 import { GitService } from "../../services/git/service"
 import { UserError, GitError } from "../../types/errors"
 import { confirmWithEdit } from "../../core/prompt"
 import { requireGhCli } from "../../core/gh-utils"
+import { makeOutput, reportError } from "../../core/output"
 
 /**
  * Speed tier options.
@@ -49,6 +50,16 @@ const contextOption = Options.text("context").pipe(
   Options.optional
 )
 
+const trailerOption = Options.text("trailer").pipe(
+  Options.withAlias("t"),
+  Options.withDescription("Line to append to the PR body footer (repeatable)"),
+  Options.repeated
+)
+
+const jsonOption = Options.boolean("json").pipe(
+  Options.withDescription("Machine-readable result on stdout; progress goes to stderr")
+)
+
 const prOptions = {
   fast: fastOption,
   slow: slowOption,
@@ -57,6 +68,17 @@ const prOptions = {
   draft: draftOption,
   base: baseOption,
   context: contextOption,
+  trailer: trailerOption,
+  json: jsonOption,
+}
+
+/**
+ * Append footer lines to a PR body, separated by a blank line.
+ */
+export const withFooter = (body: string, footerLines: readonly string[]): string => {
+  const footer = footerLines.filter((l) => l.trim()).join("\n")
+  if (!footer) return body
+  return `${body.trimEnd()}\n\n${footer}`
 }
 
 /**
@@ -97,11 +119,18 @@ const createPR = (
 /**
  * Format PR preview for display.
  */
-const formatPRPreview = (title: string, body: string, base: string, branch: string): string => {
+const formatPRPreview = (
+  title: string,
+  body: string,
+  base: string,
+  branch: string,
+  baseRef: string,
+  mergeBase: string
+): string => {
   const separator = "─".repeat(60)
   return `
 ${separator}
-${branch} → ${base}
+${branch} → ${base}  (diffed against ${baseRef}, merge-base ${mergeBase.slice(0, 7)})
 ${separator}
 ${title}
 ${separator}
@@ -115,11 +144,13 @@ ${separator}`
 export const prCommand = Command.make(
   "pr",
   prOptions,
-  ({ fast, slow, dryRun, accept, draft, base, context }) =>
+  ({ fast, slow, dryRun, accept, draft, base, context, trailer, json }) =>
     Effect.gen(function* () {
       const git = yield* GitService
       const ai = yield* AIService
       const config = yield* ConfigService
+      const output = makeOutput(json)
+      const { log, emit } = output
 
       // Check if we're in a git repo
       const isRepo = yield* git.isGitRepo()
@@ -148,32 +179,47 @@ export const prCommand = Command.make(
         )
       }
 
+      // Compare against the remote-tracking base when available. Local base
+      // branches go stale in worktrees and would leak unrelated changes.
+      const fetched = yield* git.fetchBranch(baseBranch)
+      const baseRef = yield* git.getBaseRef(baseBranch)
+      if (!fetched && baseRef.startsWith("origin/")) {
+        yield* log(`⚠ Could not fetch origin/${baseBranch}; using cached remote ref`)
+      }
+
       // Get commits ahead of base
-      const commits = yield* git.getCommitsAhead(baseBranch)
+      const commits = yield* git.getCommitsAhead(baseRef)
       if (commits.length === 0) {
         return yield* Effect.fail(
           new UserError({
-            message: `No commits ahead of ${baseBranch}.\n  Make some commits first!`,
+            message: `No commits ahead of ${baseRef}.\n  Make some commits first!`,
           })
         )
       }
 
-      // Check if branch is pushed to remote
-      const hasRemote = yield* git.hasRemote()
-      if (!hasRemote && !dryRun) {
-        yield* Console.log(`Pushing branch to origin...`)
-        yield* git.push({ setUpstream: true })
+      const mergeBase = yield* git.getMergeBase(baseRef)
+
+      // Push if the upstream is missing or behind HEAD
+      if (!dryRun) {
+        const hasRemote = yield* git.hasRemote()
+        if (!hasRemote) {
+          yield* log(`Pushing branch to origin...`)
+          yield* git.push({ setUpstream: true })
+        } else if (!(yield* git.isPushed())) {
+          yield* log(`Pushing new commits to origin...`)
+          yield* git.push()
+        }
       }
 
       // Get diff from base
-      const diff = yield* git.getDiffFromBranch(baseBranch)
+      const diff = yield* git.getDiffFromBranch(baseRef)
 
       // Determine speed
       const defaultSpeed = yield* config.getDefaultSpeed()
       const speed = fast ? "fast" : slow ? "slow" : defaultSpeed
       const contextValue = Option.getOrUndefined(context)
 
-      yield* Console.log(`Analyzing ${commits.length} commit(s) (${speed} mode)...`)
+      yield* log(`Analyzing ${commits.length} commit(s) (${speed} mode)...`)
 
       // Generate PR description
       const prOptions = contextValue
@@ -185,17 +231,35 @@ export const prCommand = Command.make(
         prOptions
       )
 
-      yield* Console.log(formatPRPreview(prDescription.title, prDescription.body, baseBranch, branchName))
+      const configFooter = yield* config.getPRFooter()
+      const body = withFooter(prDescription.body, [configFooter, ...trailer])
+      const title = prDescription.title
+
+      yield* log(formatPRPreview(title, body, baseBranch, branchName, baseRef, mergeBase))
+
+      const result = {
+        command: "pr",
+        branch: branchName,
+        base: baseBranch,
+        baseRef,
+        mergeBase,
+        commitCount: commits.length,
+        title,
+        body,
+        draft,
+      }
 
       // Dry run stops here
       if (dryRun) {
+        yield* emit({ ...result, dryRun: true })
         return
       }
 
       // Auto-accept if flag is set
       if (accept) {
-        const prUrl = yield* createPR(prDescription.title, prDescription.body, baseBranch, draft)
-        yield* Console.log(`\n✓ PR created: ${prUrl}`)
+        const prUrl = yield* createPR(title, body, baseBranch, draft)
+        yield* log(`\n✓ PR created: ${prUrl}`)
+        yield* emit({ ...result, dryRun: false, url: prUrl })
         return
       }
 
@@ -204,13 +268,13 @@ export const prCommand = Command.make(
 
       switch (response) {
         case "yes": {
-          const prUrl = yield* createPR(prDescription.title, prDescription.body, baseBranch, draft)
-          yield* Console.log(`\n✓ PR created: ${prUrl}`)
+          const prUrl = yield* createPR(title, body, baseBranch, draft)
+          yield* log(`\n✓ PR created: ${prUrl}`)
           break
         }
         case "edit": {
           // For edit, we'll create PR with gh pr create --web to open browser
-          yield* Console.log("\nOpening GitHub in browser for manual editing...")
+          yield* log("\nOpening GitHub in browser for manual editing...")
           yield* Effect.tryPromise({
             try: async () => {
               const proc = Bun.spawn(["gh", "pr", "create", "--web"], {
@@ -224,24 +288,15 @@ export const prCommand = Command.make(
           break
         }
         case "no":
-          yield* Console.log("\nAborted.")
+          yield* log("\nAborted.")
           break
       }
     }).pipe(
       Effect.catchTags({
-        UserError: (e) => Console.error(`\n✗ ${e.message}`),
-        GitError: (e) =>
-          Console.error(`\n✗ Git error: ${e.message}\n  Try: git status`),
-        AIError: (e) =>
-          Console.error(
-            e.retryable
-              ? `\n✗ AI error: ${e.message}\n  This may be a rate limit - try again in a moment`
-              : `\n✗ AI error: ${e.message}\n  Check your API key with: gritty auth status`
-          ),
-        ConfigError: (e) =>
-          Console.error(
-            `\n✗ Config error: ${e.message}\n  Check your .grittyrc file for syntax errors`
-          ),
+        UserError: (e) => reportError(makeOutput(json), e),
+        GitError: (e) => reportError(makeOutput(json), e),
+        AIError: (e) => reportError(makeOutput(json), e),
+        ConfigError: (e) => reportError(makeOutput(json), e),
       })
     )
 ).pipe(Command.withDescription("Create a PR with AI-generated description"))

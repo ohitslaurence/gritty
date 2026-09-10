@@ -20,9 +20,19 @@ export interface GitServiceImpl {
 
   /**
    * Create a commit with the given message.
+   * Returns the new HEAD hash.
    * @param message The commit message
+   * @param options Optional trailers ("Key: value") appended via git --trailer
    */
-  readonly commit: (message: string) => Effect.Effect<void, GitError>
+  readonly commit: (
+    message: string,
+    options?: { readonly trailers?: readonly string[] }
+  ) => Effect.Effect<string, GitError>
+
+  /**
+   * Get the current HEAD commit hash.
+   */
+  readonly getHeadHash: () => Effect.Effect<string, GitError>
 
   /**
    * Get the current git status.
@@ -83,9 +93,26 @@ export interface GitServiceImpl {
   readonly branchExists: (name: string) => Effect.Effect<boolean, GitError>
 
   /**
-   * Get the default branch (main or master).
+   * Get the default branch name.
+   * Prefers origin/HEAD, falls back to local main/master.
    */
   readonly getDefaultBranch: () => Effect.Effect<BranchName, GitError>
+
+  /**
+   * Resolve the ref to compare against for a branch.
+   * Returns `origin/<branch>` if the remote-tracking ref exists, else `<branch>`.
+   */
+  readonly getBaseRef: (branch: string) => Effect.Effect<string, GitError>
+
+  /**
+   * Fetch a branch from origin. Best-effort: never fails (offline is fine).
+   */
+  readonly fetchBranch: (branch: string) => Effect.Effect<boolean, never>
+
+  /**
+   * Get the merge-base between a ref and HEAD.
+   */
+  readonly getMergeBase: (ref: string) => Effect.Effect<string, GitError>
 
   /**
    * Get commits ahead of a base branch.
@@ -100,9 +127,15 @@ export interface GitServiceImpl {
   readonly getDiffFromBranch: (base: string) => Effect.Effect<DiffContent, GitError>
 
   /**
-   * Check if current branch has been pushed to remote.
+   * Check if current branch has an upstream configured.
    */
   readonly hasRemote: () => Effect.Effect<boolean, GitError>
+
+  /**
+   * Check if HEAD is fully contained in the upstream (nothing to push).
+   * False when there is no upstream.
+   */
+  readonly isPushed: () => Effect.Effect<boolean, GitError>
 
   /**
    * Push current branch to remote.

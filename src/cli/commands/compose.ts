@@ -1,5 +1,5 @@
 import { Command, Options } from "@effect/cli"
-import { Console, Effect } from "effect"
+import { Effect } from "effect"
 import { NoStagedChangesError, UserError } from "../../types/errors"
 import type { ProposedCommit } from "../../services/ai/service"
 import { AIService } from "../../services/ai/service"
@@ -7,6 +7,7 @@ import { ConfigService } from "../../services/config/service"
 import { GitService } from "../../services/git/service"
 import { confirmWithFeedback, promptText } from "../../core/prompt"
 import { executeComposedCommits, formatProposedCommits } from "../../core/compose-executor"
+import { makeOutput, reportError } from "../../core/output"
 
 /**
  * Speed tier options.
@@ -31,11 +32,23 @@ const acceptOption = Options.boolean("accept").pipe(
   Options.withDescription("Skip all confirmation prompts (for automation)")
 )
 
+const trailerOption = Options.text("trailer").pipe(
+  Options.withAlias("t"),
+  Options.withDescription("Trailer to append to every commit (repeatable)"),
+  Options.repeated
+)
+
+const jsonOption = Options.boolean("json").pipe(
+  Options.withDescription("Machine-readable result on stdout; progress goes to stderr")
+)
+
 const composeOptions = {
   fast: fastOption,
   slow: slowOption,
   dryRun: dryRunOption,
   accept: acceptOption,
+  trailer: trailerOption,
+  json: jsonOption,
 }
 
 /**
@@ -44,11 +57,13 @@ const composeOptions = {
 export const composeCommand = Command.make(
   "compose",
   composeOptions,
-  ({ fast, slow, dryRun, accept }) =>
+  ({ fast, slow, dryRun, accept, trailer, json }) =>
     Effect.gen(function* () {
       const git = yield* GitService
       const ai = yield* AIService
       const config = yield* ConfigService
+      const output = makeOutput(json)
+      const { log, emit } = output
 
       // Check if we're in a git repo
       const isRepo = yield* git.isGitRepo()
@@ -62,6 +77,9 @@ export const composeCommand = Command.make(
       const defaultSpeed = yield* config.getDefaultSpeed()
       const speed = fast ? "fast" : slow ? "slow" : defaultSpeed
 
+      const configTrailers = yield* config.getCommitTrailers()
+      const trailers = [...configTrailers, ...trailer]
+
       // Get all changed files
       const status = yield* git.getStatus()
       const allFiles = [...status.staged, ...status.unstaged, ...status.untracked]
@@ -74,7 +92,7 @@ export const composeCommand = Command.make(
         )
       }
 
-      yield* Console.log(`Analyzing ${allFiles.length} changed files...`)
+      yield* log(`Analyzing ${allFiles.length} changed files...`)
 
       // Get diffs for all files in parallel
       const diffResults = yield* Effect.all(
@@ -100,7 +118,7 @@ export const composeCommand = Command.make(
       let proposedCommits: readonly ProposedCommit[] = []
 
       while (true) {
-        yield* Console.log(feedback ? "\nRe-analyzing with feedback..." : "\nAnalyzing changes with AI...")
+        yield* log(feedback ? "\nRe-analyzing with feedback..." : "\nAnalyzing changes with AI...")
 
         // Get AI to propose commit groupings
         proposedCommits = yield* ai.composeCommits(
@@ -109,11 +127,12 @@ export const composeCommand = Command.make(
         )
 
         // Display proposed commits
-        yield* Console.log(formatProposedCommits(proposedCommits))
+        yield* log(formatProposedCommits(proposedCommits))
 
         // Dry run stops here
         if (dryRun) {
-          yield* Console.log("(Dry run - no commits created)")
+          yield* log("(Dry run - no commits created)")
+          yield* emit({ command: "compose", dryRun: true, proposed: proposedCommits })
           return
         }
 
@@ -128,13 +147,13 @@ export const composeCommand = Command.make(
         if (response === "yes") {
           break
         } else if (response === "no") {
-          yield* Console.log("\nAborted.")
+          yield* log("\nAborted.")
           return
         } else {
           // Get feedback
           feedback = yield* promptText("\nHow should the commits be grouped differently?\n> ")
           if (!feedback.trim()) {
-            yield* Console.log("No feedback provided, keeping current grouping.")
+            yield* log("No feedback provided, keeping current grouping.")
             break
           }
         }
@@ -146,25 +165,21 @@ export const composeCommand = Command.make(
       )
 
       // Execute commits using shared executor
-      yield* executeComposedCommits(proposedCommits, { speed, accept, recentCommits })
+      const commits = yield* executeComposedCommits(proposedCommits, {
+        speed,
+        accept,
+        recentCommits,
+        trailers,
+        output,
+      })
+      yield* emit({ command: "compose", dryRun: false, commits })
     }).pipe(
       Effect.catchTags({
-        NoStagedChangesError: (e) => Console.error(`\n✗ ${e.message}`),
-        UserError: (e) => Console.error(`\n✗ ${e.message}`),
-        GitError: (e) =>
-          Console.error(
-            `\n✗ Git error: ${e.message}\n  Try: git status`
-          ),
-        AIError: (e) =>
-          Console.error(
-            e.retryable
-              ? `\n✗ AI error: ${e.message}\n  This may be a rate limit - try again in a moment`
-              : `\n✗ AI error: ${e.message}\n  Check your API key with: gritty auth status`
-          ),
-        ConfigError: (e) =>
-          Console.error(
-            `\n✗ Config error: ${e.message}\n  Check your .grittyrc file for syntax errors`
-          ),
+        NoStagedChangesError: (e) => reportError(makeOutput(json), e),
+        UserError: (e) => reportError(makeOutput(json), e),
+        GitError: (e) => reportError(makeOutput(json), e),
+        AIError: (e) => reportError(makeOutput(json), e),
+        ConfigError: (e) => reportError(makeOutput(json), e),
       })
     )
 ).pipe(Command.withDescription("Analyze all changes (staged, unstaged, untracked) and compose into logical commits"))

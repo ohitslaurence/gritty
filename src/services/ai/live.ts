@@ -774,6 +774,10 @@ export const AIServiceLive = Layer.effect(
                 maxOutputTokens: 1024,
                 system: buildSystemPrompt(options),
                 prompt: buildUserPrompt(diff, options.context),
+                // Medium effort keeps latency reasonable without starving the model
+                providerOptions: {
+                  openai: { reasoningEffort: "medium" },
+                },
               })
 
               return CommitMessage(text.trim())
@@ -1033,9 +1037,9 @@ export const AIServiceLive = Layer.effect(
                 maxOutputTokens: 1024,
                 system: buildTriageSystemPrompt(),
                 prompt: buildTriageUserPrompt(files),
-                // Limit reasoning effort for simple triage decision
+                // Medium effort: cheap on luna, better than low for grouping decisions
                 providerOptions: {
-                  openai: { reasoningEffort: "low" },
+                  openai: { reasoningEffort: "medium" },
                 },
               })
 

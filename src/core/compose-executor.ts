@@ -1,10 +1,12 @@
-import { Console, Effect } from "effect"
+import { Effect } from "effect"
 import { DiffContent } from "../types/branded"
 import type { SpeedTier } from "../types/models"
+import type { AIError, GitError } from "../types/errors"
 import { AIService, type ProposedCommit } from "../services/ai/service"
 import { GitService } from "../services/git/service"
 import { confirm } from "./prompt"
 import { commitWithEditor } from "./git-utils"
+import type { Output } from "./output"
 
 /**
  * Options for executing composed commits.
@@ -13,6 +15,17 @@ export interface ComposeExecutorOptions {
   readonly speed: SpeedTier
   readonly accept: boolean
   readonly recentCommits: readonly { hash: string; message: string; author: string; date: Date }[]
+  readonly trailers: readonly string[]
+  readonly output: Output
+}
+
+/**
+ * A commit that was actually created.
+ */
+export interface CommittedResult {
+  readonly hash: string
+  readonly subject: string
+  readonly files: readonly string[]
 }
 
 /**
@@ -23,8 +36,10 @@ const executeCommit = (
   ai: AIService["Type"],
   commit: ProposedCommit,
   options: ComposeExecutorOptions
-) =>
+): Effect.Effect<CommittedResult | null, GitError | AIError> =>
   Effect.gen(function* () {
+    const { log } = options.output
+
     // Unstage everything first
     yield* git.unstageAll().pipe(Effect.catchAll(() => Effect.void))
 
@@ -35,40 +50,45 @@ const executeCommit = (
     const diff = yield* git.getDiffForFiles(commit.files)
 
     if (!diff || diff.trim().length === 0) {
-      yield* Console.log(`  Skipping "${commit.title}" (no changes)`)
-      return
+      yield* log(`  Skipping "${commit.title}" (no changes)`)
+      return null
     }
 
     // Generate full commit message
-    yield* Console.log(`\n  Generating message for: ${commit.title}...`)
+    yield* log(`\n  Generating message for: ${commit.title}...`)
     const message = yield* ai.generateCommitMessage(DiffContent(diff), {
       speed: options.speed,
       recentCommits: options.recentCommits,
       context: `Commit title: ${commit.title}. Reason: ${commit.reason}`,
     })
 
-    yield* Console.log(`\n  Message: ${message.split("\n")[0]}`)
+    const subject = message.split("\n")[0] ?? ""
+    yield* log(`\n  Message: ${subject}`)
 
     // Auto-accept skips confirmation and editor
     if (options.accept) {
-      yield* git.commit(message)
-      yield* Console.log(`  ✓ Committed`)
-      return
+      const hash = yield* git.commit(message, { trailers: options.trailers })
+      yield* log(`  ✓ Committed ${hash.slice(0, 7)}`)
+      return { hash, subject, files: commit.files }
     }
 
     // Interactive: confirm then optionally edit
     const shouldCommit = yield* confirm("  Commit this?")
 
-    if (shouldCommit) {
-      const committed = yield* commitWithEditor(message)
-      if (committed) {
-        yield* Console.log(`  ✓ Committed`)
-      } else {
-        yield* Console.log(`  Aborted`)
-      }
-    } else {
-      yield* Console.log(`  Skipped`)
+    if (!shouldCommit) {
+      yield* log(`  Skipped`)
+      return null
     }
+
+    const committed = yield* commitWithEditor(message, options.trailers)
+    if (!committed) {
+      yield* log(`  Aborted`)
+      return null
+    }
+
+    const hash = yield* git.getHeadHash()
+    yield* log(`  ✓ Committed ${hash.slice(0, 7)}`)
+    return { hash, subject, files: commit.files }
   })
 
 /**
@@ -78,18 +98,22 @@ const executeCommit = (
 export const executeComposedCommits = (
   proposedCommits: readonly ProposedCommit[],
   options: ComposeExecutorOptions
-) =>
+): Effect.Effect<readonly CommittedResult[], GitError | AIError, GitService | AIService> =>
   Effect.gen(function* () {
     const git = yield* GitService
     const ai = yield* AIService
+    const { log } = options.output
 
-    yield* Console.log("\nExecuting commits...\n")
+    yield* log("\nExecuting commits...\n")
 
+    const results: CommittedResult[] = []
     for (const commit of proposedCommits) {
-      yield* executeCommit(git, ai, commit, options)
+      const result = yield* executeCommit(git, ai, commit, options)
+      if (result) results.push(result)
     }
 
-    yield* Console.log(`\n✓ Compose complete`)
+    yield* log(`\n✓ Compose complete (${results.length} commit(s))`)
+    return results
   })
 
 /**

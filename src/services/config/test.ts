@@ -68,6 +68,8 @@ export const TestConfigService = {
         getModel: impl.getModel ?? ((speed) => Effect.succeed(DEFAULT_MODEL_REFS[speed])),
         getDefaultSpeed: impl.getDefaultSpeed ?? (() => Effect.succeed("medium")),
         getReviewExclusions: impl.getReviewExclusions ?? (() => Effect.succeed(DEFAULT_REVIEW_EXCLUSIONS)),
+        getCommitTrailers: impl.getCommitTrailers ?? (() => Effect.succeed([])),
+        getPRFooter: impl.getPRFooter ?? (() => Effect.succeed("")),
         getProviderConfig: impl.getProviderConfig ?? (() => Effect.succeed(DEFAULT_PROVIDER_CONFIG)),
       })
     ),
@@ -121,6 +123,8 @@ export const TestConfigService = {
       getModel: (speed) => Effect.succeed(DEFAULT_MODEL_REFS[speed]),
       getDefaultSpeed: () => Effect.succeed("medium"),
       getReviewExclusions: () => Effect.succeed(DEFAULT_REVIEW_EXCLUSIONS),
+      getCommitTrailers: () => Effect.succeed([]),
+      getPRFooter: () => Effect.succeed(""),
       getProviderConfig: () => Effect.succeed(DEFAULT_PROVIDER_CONFIG),
     })
   ),

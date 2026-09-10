@@ -20,9 +20,9 @@ const makeTestLayer = (opts: {
     commit: opts.onCommit
       ? (msg) => {
           opts.onCommit?.(msg)
-          return Effect.void
+          return Effect.succeed("")
         }
-      : () => Effect.void,
+      : () => Effect.succeed(""),
   })
 
   const aiLayer = TestAIService.withResponse(opts.aiResponse ?? "feat: test commit")
