@@ -26,11 +26,11 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^4",
     "@ai-sdk/openai": "^4",
-    "@effect/cli": "^0.73.0",
-    "@effect/platform": "^0.94.1",
-    "@effect/platform-bun": "^0.87.0",
+    "@effect/cli": "^0.77.1",
+    "@effect/platform": "^0.97.2",
+    "@effect/platform-bun": "^0.91.2",
     "ai": "^7",
-    "effect": "^3.19.14"
+    "effect": "^3.22.2"
   },
   "devDependencies": {
     "@types/bun": "latest",
