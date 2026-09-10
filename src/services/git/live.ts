@@ -98,7 +98,15 @@ export const GitServiceLive = Layer.succeed(
         "--pretty=format:%H|%s|%an|%at"
       ).pipe(Effect.map(parseCommits)),
 
-    commit: (message) => execGit("commit", "-m", message).pipe(Effect.asVoid),
+    commit: (message, options) =>
+      execGit(
+        "commit",
+        "-m",
+        message,
+        ...(options?.trailers ?? []).flatMap((t) => ["--trailer", t])
+      ).pipe(Effect.flatMap(() => execGit("rev-parse", "HEAD"))),
+
+    getHeadHash: () => execGit("rev-parse", "HEAD"),
 
     getStatus: () => execGit("status", "--porcelain").pipe(Effect.map(parseStatus)),
 
@@ -192,6 +200,13 @@ export const GitServiceLive = Layer.succeed(
 
     getDefaultBranch: () =>
       Effect.gen(function* () {
+        // Prefer the remote's default branch (accurate in worktrees/clones)
+        const originHead = yield* execGit("symbolic-ref", "--short", "refs/remotes/origin/HEAD").pipe(
+          Effect.map((ref) => ref.replace(/^origin\//, "")),
+          Effect.catchAll(() => Effect.succeed(""))
+        )
+        if (originHead) return BranchName(originHead)
+
         // Try main first, then master
         const mainExists = yield* execGit("show-ref", "--verify", "refs/heads/main").pipe(
           Effect.map(() => true),
@@ -209,6 +224,20 @@ export const GitServiceLive = Layer.succeed(
         return BranchName("main")
       }),
 
+    getBaseRef: (branch) =>
+      execGit("show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`).pipe(
+        Effect.map(() => `origin/${branch}`),
+        Effect.catchAll(() => Effect.succeed(branch))
+      ),
+
+    fetchBranch: (branch) =>
+      execGit("fetch", "--quiet", "origin", branch).pipe(
+        Effect.map(() => true),
+        Effect.catchAll(() => Effect.succeed(false))
+      ),
+
+    getMergeBase: (ref) => execGit("merge-base", ref, "HEAD"),
+
     getCommitsAhead: (base) =>
       execGit("log", `${base}..HEAD`, "--pretty=format:%H|%s|%an|%at").pipe(
         Effect.map(parseCommits)
@@ -221,6 +250,12 @@ export const GitServiceLive = Layer.succeed(
 
     hasRemote: () =>
       execGit("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}").pipe(
+        Effect.map(() => true),
+        Effect.catchAll(() => Effect.succeed(false))
+      ),
+
+    isPushed: () =>
+      execGit("merge-base", "--is-ancestor", "HEAD", "@{u}").pipe(
         Effect.map(() => true),
         Effect.catchAll(() => Effect.succeed(false))
       ),

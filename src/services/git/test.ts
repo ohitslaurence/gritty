@@ -10,6 +10,10 @@ const defaultBranchMethods = {
   checkoutBranch: () => Effect.void,
   branchExists: () => Effect.succeed(false),
   getDefaultBranch: () => Effect.succeed(BranchName("main")),
+  getBaseRef: (branch: string) => Effect.succeed(branch),
+  fetchBranch: () => Effect.succeed(false),
+  getMergeBase: () => Effect.succeed(""),
+  isPushed: () => Effect.succeed(false),
   getCommitsAhead: () => Effect.succeed([] as readonly Commit[]),
   getDiffFromBranch: () => Effect.succeed(DiffContent("")),
   hasRemote: () => Effect.succeed(false),
@@ -29,7 +33,8 @@ export const TestGitService = {
       GitService.of({
         getStagedDiff: impl.getStagedDiff ?? (() => Effect.succeed(DiffContent(""))),
         getRecentCommits: impl.getRecentCommits ?? (() => Effect.succeed([])),
-        commit: impl.commit ?? (() => Effect.void),
+        commit: impl.commit ?? (() => Effect.succeed("")),
+        getHeadHash: impl.getHeadHash ?? (() => Effect.succeed("")),
         getStatus:
           impl.getStatus ?? (() => Effect.succeed({ staged: [], unstaged: [], untracked: [] })),
         stageAll: impl.stageAll ?? (() => Effect.void),
@@ -43,6 +48,10 @@ export const TestGitService = {
         checkoutBranch: impl.checkoutBranch ?? defaultBranchMethods.checkoutBranch,
         branchExists: impl.branchExists ?? defaultBranchMethods.branchExists,
         getDefaultBranch: impl.getDefaultBranch ?? defaultBranchMethods.getDefaultBranch,
+        getBaseRef: impl.getBaseRef ?? defaultBranchMethods.getBaseRef,
+        fetchBranch: impl.fetchBranch ?? defaultBranchMethods.fetchBranch,
+        getMergeBase: impl.getMergeBase ?? defaultBranchMethods.getMergeBase,
+        isPushed: impl.isPushed ?? defaultBranchMethods.isPushed,
         getCommitsAhead: impl.getCommitsAhead ?? defaultBranchMethods.getCommitsAhead,
         getDiffFromBranch: impl.getDiffFromBranch ?? defaultBranchMethods.getDiffFromBranch,
         hasRemote: impl.hasRemote ?? defaultBranchMethods.hasRemote,
@@ -75,7 +84,7 @@ export const TestGitService = {
     TestGitService.make({
       commit: (message) => {
         capture(message)
-        return Effect.void
+        return Effect.succeed("")
       },
     }),
 
@@ -87,7 +96,8 @@ export const TestGitService = {
     GitService.of({
       getStagedDiff: () => Effect.succeed(DiffContent("")),
       getRecentCommits: () => Effect.succeed([]),
-      commit: () => Effect.void,
+      commit: () => Effect.succeed(""),
+      getHeadHash: () => Effect.succeed(""),
       getStatus: () => Effect.succeed({ staged: [], unstaged: [], untracked: [] }),
       stageAll: () => Effect.void,
       stageFiles: () => Effect.void,

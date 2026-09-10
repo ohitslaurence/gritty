@@ -1,5 +1,5 @@
 import { Command, Options } from "@effect/cli"
-import { Console, Effect, Option } from "effect"
+import { Effect, Option } from "effect"
 import { DiffContent } from "../../types/branded"
 import { NoStagedChangesError, UserError } from "../../types/errors"
 import { AIService } from "../../services/ai/service"
@@ -8,7 +8,12 @@ import { GitService } from "../../services/git/service"
 import { confirmWithEdit, confirm } from "../../core/prompt"
 import { isDiffTooLarge } from "../../core/split"
 import { commitWithEditor } from "../../core/git-utils"
-import { executeComposedCommits, formatProposedCommits } from "../../core/compose-executor"
+import { makeOutput, reportError, type Output } from "../../core/output"
+import {
+  executeComposedCommits,
+  formatProposedCommits,
+  type CommittedResult,
+} from "../../core/compose-executor"
 
 /**
  * File count threshold for triage.
@@ -42,14 +47,29 @@ const acceptOption = Options.boolean("accept").pipe(
   Options.withDescription("Skip confirmation prompt (for automation)")
 )
 
+const allOption = Options.boolean("all").pipe(
+  Options.withAlias("A"),
+  Options.withDescription("Stage all changes, even if files are already staged")
+)
+
 const stagedOnlyOption = Options.boolean("staged-only").pipe(
-  Options.withDescription("Use already-staged changes only (don't auto-stage)")
+  Options.withDescription("Never auto-stage; fail if nothing is staged")
 )
 
 const contextOption = Options.text("context").pipe(
   Options.withAlias("c"),
   Options.withDescription("Context for AI (e.g., 'fixes issue #123')"),
   Options.optional
+)
+
+const trailerOption = Options.text("trailer").pipe(
+  Options.withAlias("t"),
+  Options.withDescription("Trailer to append (repeatable), e.g. 'Co-Authored-By: Name <email>'"),
+  Options.repeated
+)
+
+const jsonOption = Options.boolean("json").pipe(
+  Options.withDescription("Machine-readable result on stdout; progress goes to stderr")
 )
 
 /**
@@ -60,8 +80,11 @@ const commitOptions = {
   slow: slowOption,
   dryRun: dryRunOption,
   accept: acceptOption,
+  all: allOption,
   stagedOnly: stagedOnlyOption,
   context: contextOption,
+  trailer: trailerOption,
+  json: jsonOption,
 }
 
 /**
@@ -76,16 +99,58 @@ ${separator}`
 }
 
 /**
+ * Decide what to stage.
+ * - `--all`: stage everything.
+ * - index already has files: use them as-is (respect deliberate staging).
+ * - `--staged-only` with empty index: fail.
+ * - otherwise: stage everything.
+ */
+export const prepareIndex = (
+  git: GitService["Type"],
+  output: Output,
+  flags: { all: boolean; stagedOnly: boolean }
+) =>
+  Effect.gen(function* () {
+    const before = yield* git.getStatus()
+
+    if (flags.all) {
+      yield* output.log("Staging all changes...")
+      yield* git.stageAll()
+      return
+    }
+
+    if (before.staged.length > 0) {
+      yield* output.log(
+        `Using ${before.staged.length} already-staged file(s) (pass --all to stage everything)`
+      )
+      return
+    }
+
+    if (flags.stagedOnly) {
+      return yield* Effect.fail(
+        new NoStagedChangesError({
+          message: "No staged changes found. Stage files with `git add` first.",
+        })
+      )
+    }
+
+    yield* output.log("Staging all changes...")
+    yield* git.stageAll()
+  })
+
+/**
  * The commit command implementation.
  */
 export const commitCommand = Command.make(
   "commit",
   commitOptions,
-  ({ fast, slow, dryRun, accept, stagedOnly, context }) =>
+  ({ fast, slow, dryRun, accept, all, stagedOnly, context, trailer, json }) =>
     Effect.gen(function* () {
       const git = yield* GitService
       const ai = yield* AIService
       const config = yield* ConfigService
+      const output = makeOutput(json)
+      const { log, emit } = output
 
       // Check if we're in a git repo
       const isRepo = yield* git.isGitRepo()
@@ -100,20 +165,18 @@ export const commitCommand = Command.make(
       const speed = fast ? "fast" : slow ? "slow" : defaultSpeed
       const contextValue = Option.getOrUndefined(context)
 
-      // Stage all changes unless --staged-only
-      if (!stagedOnly) {
-        yield* Console.log("Staging all changes...")
-        yield* git.stageAll()
-      }
+      // Trailers: config first, then CLI
+      const configTrailers = yield* config.getCommitTrailers()
+      const trailers = [...configTrailers, ...trailer]
+
+      yield* prepareIndex(git, output, { all, stagedOnly })
 
       const diff = yield* git.getStagedDiff()
 
       if (!diff || diff.trim().length === 0) {
         return yield* Effect.fail(
           new NoStagedChangesError({
-            message: stagedOnly
-              ? "No staged changes found. Stage files with `git add` first."
-              : "No changes found (staged or unstaged). Make some changes first!",
+            message: "No changes found (staged or unstaged). Make some changes first!",
           })
         )
       }
@@ -125,7 +188,7 @@ export const commitCommand = Command.make(
 
       // Triage: decide if we should compose instead
       if (fileCount >= TRIAGE_THRESHOLD) {
-        yield* Console.log(`Analyzing ${fileCount} files for commit strategy...`)
+        yield* log(`Analyzing ${fileCount} files for commit strategy...`)
 
         // Get diffs for staged files
         const diffResults = yield* Effect.all(
@@ -142,21 +205,28 @@ export const commitCommand = Command.make(
         const triage = yield* ai.triageCommit(filesWithDiffs)
 
         if (triage.shouldCompose) {
-          yield* Console.log(`\n⚠ Triage suggests multiple commits: ${triage.reason}`)
+          yield* log(`\n⚠ Triage suggests multiple commits: ${triage.reason}`)
 
           // In accept mode, auto-switch to compose
           if (accept) {
-            yield* Console.log("Switching to compose mode...")
+            yield* log("Switching to compose mode...")
 
             // Get AI to propose commit groupings
             const proposedCommits = yield* ai.composeCommits(filesWithDiffs, { speed })
 
             // Display proposed commits
-            yield* Console.log(formatProposedCommits(proposedCommits))
+            yield* log(formatProposedCommits(proposedCommits))
 
             // Dry run stops here
             if (dryRun) {
-              yield* Console.log("(Dry run - no commits created)")
+              yield* log("(Dry run - no commits created)")
+              yield* emit({
+                command: "commit",
+                mode: "compose",
+                dryRun: true,
+                staged: stagedFiles,
+                proposed: proposedCommits,
+              })
               return
             }
 
@@ -166,7 +236,17 @@ export const commitCommand = Command.make(
             )
 
             // Execute composed commits
-            yield* executeComposedCommits(proposedCommits, { speed, accept, recentCommits })
+            const commits: readonly CommittedResult[] = yield* executeComposedCommits(
+              proposedCommits,
+              { speed, accept, recentCommits, trailers, output }
+            )
+            yield* emit({
+              command: "commit",
+              mode: "compose",
+              dryRun: false,
+              staged: stagedFiles,
+              commits,
+            })
             return
           }
 
@@ -174,17 +254,17 @@ export const commitCommand = Command.make(
           const shouldCompose = yield* confirm("Would you like to compose into multiple commits?")
 
           if (shouldCompose) {
-            yield* Console.log("\nAnalyzing changes for commit groupings...")
+            yield* log("\nAnalyzing changes for commit groupings...")
 
             // Get AI to propose commit groupings
             const proposedCommits = yield* ai.composeCommits(filesWithDiffs, { speed })
 
             // Display proposed commits
-            yield* Console.log(formatProposedCommits(proposedCommits))
+            yield* log(formatProposedCommits(proposedCommits))
 
             // Dry run stops here
             if (dryRun) {
-              yield* Console.log("(Dry run - no commits created)")
+              yield* log("(Dry run - no commits created)")
               return
             }
 
@@ -197,16 +277,22 @@ export const commitCommand = Command.make(
               )
 
               // Execute composed commits
-              yield* executeComposedCommits(proposedCommits, { speed, accept, recentCommits })
+              yield* executeComposedCommits(proposedCommits, {
+                speed,
+                accept,
+                recentCommits,
+                trailers,
+                output,
+              })
               return
             }
 
-            yield* Console.log("\nContinuing with single commit...")
+            yield* log("\nContinuing with single commit...")
           }
         }
       }
 
-      yield* Console.log(`Analyzing changes (${speed} mode)...`)
+      yield* log(`Analyzing changes (${speed} mode)...`)
 
       // Fetch recent commits for style detection
       const recentCommits = yield* git.getRecentCommits(10).pipe(
@@ -216,7 +302,7 @@ export const commitCommand = Command.make(
       // Truncate diff if too large
       const diffTruncated = isDiffTooLarge(diff)
       if (diffTruncated) {
-        yield* Console.log("⚠ Large diff detected - truncating for analysis")
+        yield* log("⚠ Large diff detected - truncating for analysis")
       }
       const safeDiff = diffTruncated
         ? diff.slice(0, 80000) + "\n\n[... diff truncated ...]"
@@ -229,18 +315,35 @@ export const commitCommand = Command.make(
           ? { speed, context: contextValue, recentCommits }
           : { speed, recentCommits }
       )
+      const subject = message.split("\n")[0] ?? ""
 
-      yield* Console.log(formatMessage(message))
+      yield* log(formatMessage(message))
 
       // Dry run stops here
       if (dryRun) {
+        yield* emit({
+          command: "commit",
+          mode: "single",
+          dryRun: true,
+          staged: stagedFiles,
+          message,
+          trailers,
+        })
         return
       }
 
       // Auto-accept if flag is set
       if (accept) {
-        yield* git.commit(message)
-        yield* Console.log(`\n✓ Committed: ${message.split("\n")[0]}`)
+        const hash = yield* git.commit(message, { trailers })
+        yield* log(`\n✓ Committed ${hash.slice(0, 7)}: ${subject}`)
+        yield* emit({
+          command: "commit",
+          mode: "single",
+          dryRun: false,
+          staged: stagedFiles,
+          message,
+          commits: [{ hash, subject, files: stagedFiles }],
+        })
         return
       }
 
@@ -248,41 +351,35 @@ export const commitCommand = Command.make(
       const response = yield* confirmWithEdit("\nCommit with this message?")
 
       switch (response) {
-        case "yes":
-          yield* git.commit(message)
-          yield* Console.log(`\n✓ Committed: ${message.split("\n")[0]}`)
+        case "yes": {
+          const hash = yield* git.commit(message, { trailers })
+          yield* log(`\n✓ Committed ${hash.slice(0, 7)}: ${subject}`)
           break
+        }
         case "edit": {
-          const committed = yield* commitWithEditor(message)
+          const committed = yield* commitWithEditor(message, trailers)
           if (committed) {
-            yield* Console.log(`\n✓ Committed`)
+            yield* log(`\n✓ Committed`)
           } else {
-            yield* Console.log("\nAborted.")
+            yield* log("\nAborted.")
           }
           break
         }
         case "no":
-          yield* Console.log("\nAborted.")
+          yield* log("\nAborted.")
           break
       }
     }).pipe(
       Effect.catchTags({
-        NoStagedChangesError: (e) => Console.error(`\n✗ ${e.message}`),
-        UserError: (e) => Console.error(`\n✗ ${e.message}`),
-        GitError: (e) =>
-          Console.error(
-            `\n✗ Git error: ${e.message}\n  Try: git status`
-          ),
-        AIError: (e) =>
-          Console.error(
-            e.retryable
-              ? `\n✗ AI error: ${e.message}\n  This may be a rate limit - try again in a moment`
-              : `\n✗ AI error: ${e.message}\n  Check your API key with: gritty auth status`
-          ),
-        ConfigError: (e) =>
-          Console.error(
-            `\n✗ Config error: ${e.message}\n  Check your .grittyrc file for syntax errors`
-          ),
+        NoStagedChangesError: (e) => reportError(makeOutput(json), e),
+        UserError: (e) => reportError(makeOutput(json), e),
+        GitError: (e) => reportError(makeOutput(json), e),
+        AIError: (e) => reportError(makeOutput(json), e),
+        ConfigError: (e) => reportError(makeOutput(json), e),
       })
     )
-).pipe(Command.withDescription("Generate a commit message (auto-stages all changes unless --staged-only)"))
+).pipe(
+  Command.withDescription(
+    "Generate a commit message (uses staged files if any, otherwise stages everything)"
+  )
+)
